@@ -8,16 +8,30 @@ Experiments on model-glass dispersion representations — comparing the **Buchda
 
 ## Setup
 
-Create the conda environment and activate it:
+### With uv (recommended)
+
+[`uv`](https://docs.astral.sh/uv/) installs a reproducible environment from `pyproject.toml` + `uv.lock` in a single step:
+
+```bash
+uv sync                       # creates .venv and installs locked versions
+.venv\Scripts\activate        # Windows (PowerShell/cmd)
+# source .venv/bin/activate   # macOS / Linux
+```
+
+If `uv` is not installed yet: `pip install uv`, or use the [standalone installer](https://docs.astral.sh/uv/getting-started/installation/).
+
+### With conda (alternative)
 
 ```bash
 conda env create -f environment.yml
 conda activate dispersionlab
 ```
 
-Then launch Jupyter (`jupyter notebook`) or open the notebook in VSCode and select the `dispersionlab` kernel.
-
 Update after `environment.yml` changes: `conda env update -f environment.yml --prune`.
+
+---
+
+After either setup, launch Jupyter (`jupyter notebook`) or open the notebook in VSCode and pick the `.venv` / `dispersionlab` kernel.
 
 ### Requirements
 
