@@ -1,0 +1,16 @@
+[project]
+name = "dispersionlab"
+version = "0.1.0"
+description = "Experiments on model-glass dispersion representations (Buchdahl vs Chebyshev)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pyyaml",
+    "jupyter",
+    "ipykernel",
+    "nbformat",
+    "optiland",
+]
