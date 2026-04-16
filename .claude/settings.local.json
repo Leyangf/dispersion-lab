@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh auth *)",
+      "Bash(git --version)",
+      "Bash(git config *)",
+      "Bash(where gh *)",
+      "Read(//c/Program Files/**)"
+    ]
+  }
+}
