@@ -21,7 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 PROJECT_ROOT = HERE.parent
-OUT = PROJECT_ROOT / "notebooks" / "04_neural_buchdahl.ipynb"
+OUT = PROJECT_ROOT / "notebooks" / "04_neural_buchdahl_phase1.ipynb"
 
 
 def md(source):
