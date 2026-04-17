@@ -10,14 +10,14 @@ that workflow under stricter physical constraints.
 
 ### Part I - Original Buchdahl workflow
 
-1. [model_glass_buchdahl.ipynb](model_glass_buchdahl.ipynb) - fits the 4-term Buchdahl model `n(lambda) = nd + nu1*w + nu2*w^2 + nu3*w^3 + nu4*w^4` across catalog glasses.
-2. [glass_substitution_workflow.ipynb](glass_substitution_workflow.ipynb) - validates the model as a glass-selection tool using an apochromatic doublet workflow.
-3. [differentiable_design.ipynb](differentiable_design.ipynb) - ports the workflow to torch/autograd for gradient design and fixed-prescription tolerancing.
+1. [notebooks/01_model_glass_buchdahl.ipynb](notebooks/01_model_glass_buchdahl.ipynb) - fits the 4-term Buchdahl model `n(lambda) = nd + nu1*w + nu2*w^2 + nu3*w^3 + nu4*w^4` across catalog glasses.
+2. [notebooks/02_glass_substitution_workflow.ipynb](notebooks/02_glass_substitution_workflow.ipynb) - validates the model as a glass-selection tool using an apochromatic doublet workflow.
+3. [notebooks/03_differentiable_design.ipynb](notebooks/03_differentiable_design.ipynb) - ports the workflow to torch/autograd for gradient design and fixed-prescription tolerancing.
 
 ### Part II - Audit and constrained refinement
 
-4. [neural_buchdahl.ipynb](neural_buchdahl.ipynb) - audits the original coefficient construction, repairs spectral-line anchor consistency, and tests neural coefficient predictors.
-5. [neural_buchdahl_phase2.ipynb](neural_buchdahl_phase2.ipynb) - adds a bounded residual correction on top of the repaired anchor-preserving baseline to improve off-anchor broadband accuracy.
+4. [notebooks/04_neural_buchdahl.ipynb](notebooks/04_neural_buchdahl.ipynb) - audits the original coefficient construction, repairs spectral-line anchor consistency, and tests neural coefficient predictors.
+5. [notebooks/05_neural_buchdahl_phase2.ipynb](notebooks/05_neural_buchdahl_phase2.ipynb) - adds a bounded residual correction on top of the repaired anchor-preserving baseline to improve off-anchor broadband accuracy.
 
 Future workflow runs should use the anchor-preserving baseline introduced
 in notebook 4; notebooks 1-3 are retained as the original workflow
@@ -38,10 +38,34 @@ Current refinement findings:
   `eps_scale` rows are best read as stress tests, not as small physical
   corrections.
 
+## Repo layout
+
+```
+DispersionLab/
+├── notebooks/      authored + generated .ipynb files (numbered 01-05)
+├── scripts/        build_0N_*.py - regenerate notebooks 02-05 from source
+├── data/           pre-trained regression matrices (produced by notebook 01)
+├── pyproject.toml  uv-managed dependencies
+└── uv.lock         locked versions
+```
+
 Supporting files:
 
-- `regression_buchdahl_nu34_20dim_opt.npy` - pretrained linear map for the 3rd/4th Buchdahl coefficients.
-- `_build_*.py` - scripts that regenerate the authored notebooks.
+- `data/regression_buchdahl_nu34_20dim_opt.npy` - pretrained linear map
+  for the 3rd/4th Buchdahl coefficients (used by notebooks 02-04).
+- `scripts/build_0N_*.py` - regenerate notebooks 02-05. Notebook 01 is
+  authored directly and produces the `.npy` regression files.
+
+To regenerate a notebook, run its build script from the project root:
+
+```bash
+uv run python scripts/build_02_workflow.py
+uv run jupyter nbconvert --to notebook --execute notebooks/02_glass_substitution_workflow.ipynb --output notebooks/02_glass_substitution_workflow.ipynb
+```
+
+Notebooks use relative paths (`../data/...`), so they must be run with
+`notebooks/` as the working directory - which is the default when
+launching Jupyter from that folder or when using `nbconvert --execute`.
 
 ## Setup
 

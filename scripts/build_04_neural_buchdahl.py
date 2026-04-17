@@ -20,7 +20,8 @@ import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
-OUT = HERE / "neural_buchdahl.ipynb"
+PROJECT_ROOT = HERE.parent
+OUT = PROJECT_ROOT / "notebooks" / "04_neural_buchdahl.ipynb"
 
 
 def md(source):
@@ -249,7 +250,7 @@ print(f"Loaded {N_GLASS} glasses with full 0.365–2.3 um Sellmeier support.")
 
 cells.append(code(
 """# ---- Load the pre-trained linear regressor A_REG (variant A) ----
-A_REG_old = np.load("regression_buchdahl_nu34_20dim_opt.npy")
+A_REG_old = np.load("../data/regression_buchdahl_nu34_20dim_opt.npy")
 print(f"A_REG_old loaded: shape {A_REG_old.shape}  (alpha = {ALPHA})")
 """))
 
