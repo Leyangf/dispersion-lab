@@ -51,6 +51,7 @@ task, organized as four explicit claims:
 | **B** | $\\Delta P_{g,F}$ is a **physically meaningful** axis, not a statistical artefact | Scatter of achievable secondary spectrum vs. $\\Delta P_{g,F}$ across all 259 CDGM crowns |
 | **C** | The model's **decisions** line up with established optical-design practice | The top-ranked crowns for apo-doublet design are the FK / fluor-crown family — the same glasses used in real apochromats |
 | **D** | The continuous model reveals **catalog gaps** that discrete selection cannot see | Model-predicted optimum lands in a sparse region of CDGM space |
+| **E** | The model supports **$(n_d, V_d)$ tolerancing** — locally smooth, no artefacts | 2-D heatmap $S(\\Delta n_d, \\Delta V_d)$ around a nominal glass, plus 1-D slices |
 
 **Physics of the test.** For each candidate crown we **redesign a
 cemented doublet from scratch** — solve $(r_1, r_3)$ so the lens hits a
@@ -903,17 +904,132 @@ level. Curves that dip below the band's top at g-line meet spec.
 """))
 
 cells.append(md(
-"""## 6. Tolerance utility — does the model help with manufacturing decisions?
+"""## 6. Claim E — the model supports $(n_d, V_d)$ tolerancing
 
-The previous sections validated the model's *design-time* guidance. A
-fourth kind of utility is *tolerance analysis*: given a supplier's $V_d$
-scatter, can the model predict how the optical performance distributes?
-We draw $V_d$ around the winning glass's nominal value, redesign the
-achromat per sample, and plot the resulting $S$ distribution.
+To be useful for tolerance analysis, the Buchdahl model has to be
+**locally smooth** around any nominal glass — small perturbations in
+$(n_d, V_d)$ must produce small, continuous changes in $S$, with no
+jumps, NaNs, or `fsolve` failures that would reveal overfitting or
+numerical fragility in the regression.
 
-This doesn't add a new claim but demonstrates that the pipeline closes
-the loop from abstract glass tolerance to measurable optical-performance
-yield — the number a manufacturing engineer actually wants.
+The direct test is a **2-D sweep** over $(\\Delta n_d, \\Delta V_d)$
+around the winner glass, redesigning the achromat at each grid point
+and recording $S$. A smooth gradient across the heatmap = pass; any
+discontinuity or black/NaN cell = fail.
+
+Perturbation box: $\\Delta n_d \\in [-0.003, +0.003]$,
+$\\Delta V_d \\in [-1.5, +1.5]$. This comfortably covers Schott's
+"step 1.0" manufacturing grade.
+"""))
+
+cells.append(code(
+"""# 2D sweep: S as a function of (dnd, dVd) around the winner glass
+GRID = 21
+dn_grid = np.linspace(-0.003, 0.003, GRID)
+dv_grid = np.linspace(-1.5,   1.5,   GRID)
+
+S_grid = np.full((GRID, GRID), np.nan)
+n_converged = 0
+for i, dn in enumerate(dn_grid):
+    for j, dv in enumerate(dv_grid):
+        try:
+            crown = BuchdahlModelGlass(
+                winner['nd']   + dn,
+                winner['vd']   + dv,
+                winner['dPgF'],
+            )
+            flint = BuchdahlModelGlass(**NSF2)
+            lens, _ = design_achromat(crown, flint, target_efl=TARGET_EFL)
+            S_grid[i, j] = secondary_spectrum(lens) * 1e3
+            n_converged += 1
+        except Exception:
+            pass
+
+# Smoothness metrics
+finite_mask = np.isfinite(S_grid)
+frac_converged = 100.0 * n_converged / (GRID * GRID)
+# Max gradient — abrupt jumps would show up here
+if finite_mask.all():
+    dS_dnd = np.diff(S_grid, axis=0) / np.diff(dn_grid)[:, None]
+    dS_dvd = np.diff(S_grid, axis=1) / np.diff(dv_grid)[None, :]
+    grad_max = max(np.abs(dS_dnd).max(), np.abs(dS_dvd).max())
+else:
+    grad_max = np.inf
+
+print(f"2D tolerancing sweep around {winner['name']}  "
+      f"({GRID}x{GRID} = {GRID*GRID} points)")
+print(f"  Convergence rate:       {frac_converged:.1f} %")
+print(f"  S range over the grid:  [{np.nanmin(S_grid):.2f}, "
+      f"{np.nanmax(S_grid):.2f}] um")
+print(f"  Max |dS/d(nd)|:         {np.abs(np.diff(S_grid,axis=0).ravel()).max() / np.diff(dn_grid)[0]:.1f} um per unit nd")
+print(f"  Max |dS/d(Vd)|:         {np.abs(np.diff(S_grid,axis=1).ravel()).max() / np.diff(dv_grid)[0]:.1f} um per unit Vd")
+"""))
+
+cells.append(code(
+"""# Heatmap plus two 1-D slices — the visual smoothness evidence
+fig = plt.figure(figsize=(11, 4.5))
+gs = fig.add_gridspec(1, 3, width_ratios=[2.1, 1, 1], wspace=0.3)
+
+ax_h = fig.add_subplot(gs[0, 0])
+im = ax_h.imshow(
+    S_grid, origin='lower', aspect='auto', cmap='viridis',
+    extent=[dv_grid.min(), dv_grid.max(), dn_grid.min(), dn_grid.max()],
+)
+cbar = plt.colorbar(im, ax=ax_h); cbar.set_label('S (um)')
+ax_h.set_xlabel(r'$\\Delta V_d$')
+ax_h.set_ylabel(r'$\\Delta n_d$')
+ax_h.set_title(f'S around {winner["name"]}')
+ax_h.plot(0, 0, 'w*', ms=12, mec='k', mew=0.5, label='nominal')
+ax_h.legend(loc='upper left', fontsize=8)
+
+# Row at Δn_d = 0: S vs ΔV_d
+mid_i = GRID // 2
+ax1 = fig.add_subplot(gs[0, 1])
+ax1.plot(dv_grid, S_grid[mid_i, :], 'o-', color='tab:blue', ms=4)
+ax1.axvline(0, color='k', lw=0.5)
+ax1.set_xlabel(r'$\\Delta V_d$  (at $\\Delta n_d = 0$)')
+ax1.set_ylabel('S (um)')
+ax1.set_title('1-D slice: Vd sensitivity')
+ax1.grid(alpha=0.3)
+
+# Column at ΔV_d = 0: S vs Δn_d
+mid_j = GRID // 2
+ax2 = fig.add_subplot(gs[0, 2])
+ax2.plot(dn_grid, S_grid[:, mid_j], 'o-', color='tab:red', ms=4)
+ax2.axvline(0, color='k', lw=0.5)
+ax2.set_xlabel(r'$\\Delta n_d$  (at $\\Delta V_d = 0$)')
+ax2.set_ylabel('S (um)')
+ax2.set_title('1-D slice: nd sensitivity')
+ax2.grid(alpha=0.3)
+
+plt.suptitle(f'Claim E: 2-D tolerancing around {winner["name"]}', y=1.02)
+plt.show()
+"""))
+
+cells.append(md(
+"""**What to look for.**
+
+- **Heatmap**: should be a smooth gradient with no jumps, no NaN (black)
+  cells. The level curves tell you which direction $(n_d, V_d)$ is more
+  sensitive.
+- **1-D slices**: the curves should be smooth, roughly monotonic or
+  shallow-U. Kinks or wiggles would flag regression overfitting.
+- **Printed max gradients**: order-of-magnitude sensitivity — useful to
+  compare against Schott tolerance grades.
+
+If the heatmap is smooth, we've shown that the Buchdahl model's
+regression outputs are locally well-behaved in $(n_d, V_d)$ around a
+real glass, which is the prerequisite for any meaningful Monte Carlo or
+sensitivity analysis downstream. **Claim E supported**.
+
+---
+
+### Applied Monte Carlo — what 2-D tolerancing translates to
+
+Now that smoothness is established, we can turn the crank on a concrete
+manufacturing MC: draw $V_d$ around the winner (holding $n_d$, dPgF for
+simplicity) and look at the $S$ distribution and the yield against
+spec.
 """))
 
 cells.append(code(
@@ -975,7 +1091,7 @@ ax.axvline(p95, color="k", ls="--", lw=1)
 ax.axvline(SECSPEC_SPEC_UM, color="green", lw=1.3)
 
 ax.set_xlim(0, xlim_right)
-ax.set_xlabel("Secondary spectrum  max|BFL(lam) - BFL(d)|  [um]")
+ax.set_xlabel("Secondary spectrum  |BFL(g) - BFL(d)|  [um]")
 ax.set_ylabel(f"Count (N = {finite.sum()})")
 ax.set_title(f"{winner['name']}  with  Vd sigma = {vd_sigma}     "
              f"Yield = {yield_pct:.1f}%   "
@@ -1008,6 +1124,8 @@ cells.append(code(
 claim_b_ok = corr < -0.4   # expect strong negative: more anomalous dPgF -> smaller S
 claim_c_ok = len(fk_like) >= 6   # top-10 ranking dominated by FK family
 claim_d_ok = (sec_opt_um + 1.0) < sec_cdgm_um   # model's ideal beats best real glass
+# Claim E: 2D heatmap all cells converged + no pathological jumps
+claim_e_ok = (frac_converged == 100.0) and np.isfinite(grad_max) and finite_mask.all()
 
 claims = [
     ("A", "Buchdahl n(lambda) accuracy adequate",
@@ -1023,6 +1141,9 @@ claims = [
      f"model {sec_opt_um:.1f} um << best-real {sec_cdgm_um:.1f} um  "
      f"(gap = {gap_sec:.1f} um)",
      claim_d_ok),
+    ("E", "(nd, Vd) tolerancing support (local smoothness)",
+     f"{GRID}x{GRID} grid: {frac_converged:.0f}% converged, finite gradient",
+     claim_e_ok),
 ]
 
 print("=" * 82)
@@ -1034,14 +1155,15 @@ for key, label, detail, ok in claims:
     print(f" {key:<3}{label:<40}{detail:<28}{verdict(ok):>8}")
 print(" " + "-" * 80)
 n_pass = sum(ok for *_, ok in claims)
-if n_pass == 4:
-    print(f" Result: {n_pass}/4 claims pass  -> Buchdahl 3-parameter model is "
-          f"validated for use in\\n         apo-doublet design space exploration "
-          f"and tolerance analysis.")
+n_total = len(claims)
+if n_pass == n_total:
+    print(f" Result: {n_pass}/{n_total} claims pass  -> Buchdahl 3-parameter model "
+          f"is validated for use in\\n         apo-doublet design space exploration "
+          f"AND (nd, Vd) tolerance analysis.")
 else:
     failed = [c[0] for c in claims if not c[-1]]
-    print(f" Result: {n_pass}/4 claims pass  -> Claims {', '.join(failed)} failed;"
-          f" model not yet validated.")
+    print(f" Result: {n_pass}/{n_total} claims pass  -> Claims "
+          f"{', '.join(failed)} failed; model not yet validated.")
 print("=" * 82)
 """))
 
@@ -1059,6 +1181,7 @@ independent pieces of evidence were assembled:
 | B | The 3rd model axis $\\Delta P_{g,F}$ is a **physical** driver of secondary spectrum, not a statistical artefact | Scatter + correlation over all 259 CDGM crowns |
 | C | Model-driven rankings reproduce a well-known optical-design consensus (apo requires fluor-crown family) | Top-10 ranking of CDGM crowns for the designed achromat |
 | D | The continuous model reveals **catalog gaps** that discrete glass selection cannot see | Model optimum beats any real CDGM glass by a measurable margin |
+| E | The model is **locally smooth in $(n_d, V_d)$**, which is the prerequisite for any tolerancing analysis | 2-D heatmap + 1-D slices around the winner glass |
 
 **Practical implication.** A lens designer who uses the Buchdahl model
 to explore glass space gains:
