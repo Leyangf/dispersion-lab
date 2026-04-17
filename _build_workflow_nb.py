@@ -43,15 +43,15 @@ numbers (max fit error, RMS, etc.) show that it *fits data* well. That
 is necessary but not sufficient — we also need evidence that the model
 is **physically meaningful** and **useful for decisions**. This notebook
 assembles that evidence through a concrete apochromatic-doublet design
-task, organized as four explicit claims:
+task, organized as five explicit claims:
 
 | Claim | Statement | Evidence |
 |---|---|---|
 | **A** | The predicted $n(\\lambda)$ is accurate enough for design use | N-BK7 sanity check over the full visible band |
-| **B** | $\\Delta P_{g,F}$ is a **physically meaningful** axis, not a statistical artefact | Scatter of achievable secondary spectrum vs. $\\Delta P_{g,F}$ across all 259 CDGM crowns |
+| **B** | $\\Delta P_{g,F}$ is a **physically meaningful** axis, not a statistical artefact | Scatter of achievable secondary spectrum vs. $\\Delta P_{g,F}$ across all feasible CDGM crown candidates |
 | **C** | The model's **decisions** line up with established optical-design practice | The top-ranked crowns for apo-doublet design are the FK / fluor-crown family — the same glasses used in real apochromats |
-| **D** | The continuous model reveals **catalog gaps** that discrete selection cannot see | Model-predicted optimum lands in a sparse region of CDGM space |
-| **E** | The model supports **$(n_d, V_d)$ tolerancing** — locally smooth, no artefacts | 2-D heatmap $S(\\Delta n_d, \\Delta V_d)$ around a nominal glass, plus 1-D slices |
+| **D** | The continuous model's **target** informs design decisions, even when it falls outside the catalog hull | Model-predicted optimum vs. best real CDGM glass, with an explicit training-hull check |
+| **E** | The model is **locally smooth enough** in $(n_d, V_d)$ for first-order sensitivity studies | 2-D heatmap $S(\\Delta n_d, \\Delta V_d)$ around a nominal glass, plus 1-D slices |
 
 **Physics of the test.** For each candidate crown we **redesign a
 cemented doublet from scratch** — solve $(r_1, r_3)$ so the lens hits a
@@ -60,9 +60,13 @@ aberration left is the secondary spectrum $S = |\\text{BFL}(\\lambda_g) -
 \\text{BFL}(\\lambda_d)|$, and $S$ is the headline figure of merit for
 apochromats. Conrady's formula for a thin achromat says
 $S \\approx f \\cdot (P_\\text{crown} - P_\\text{flint}) / (V_\\text{crown}
-- V_\\text{flint})$, so $S$ is driven almost entirely by the partial
-dispersion difference — i.e. by $\\Delta P_{g,F}$. This makes $S$ a
-natural probe of whether the 3rd Buchdahl axis carries real information.
+- V_\\text{flint})$, so $S$ is strongly controlled by the glass-pair
+partial-dispersion balance. Because $\\Delta P_{g,F}$ parametrizes the
+deviation from the Schott normal line, it is a convenient single axis
+to explore, but it should be read together with $V_d$ and $P_{g,F}$,
+which jointly set the numerator and denominator of the Conrady
+expression. That is why $S$ is a natural probe of whether the 3rd
+Buchdahl axis carries real information.
 """))
 
 cells.append(md(
@@ -76,7 +80,6 @@ just load it and redefine the runtime-prediction function.
 cells.append(code(
 """from __future__ import annotations
 from pathlib import Path
-import copy
 import os
 import importlib.util
 
@@ -84,7 +87,6 @@ import numpy as np
 import yaml
 import matplotlib.pyplot as plt
 
-import optiland
 import optiland.backend as be
 from optiland import optic
 from optiland.materials.base import BaseMaterial
@@ -201,13 +203,15 @@ err_max  = float(np.max(np.abs(err)))
 err_rms  = float(np.sqrt(np.mean(err**2)))
 
 # Spot checks at F / d / C
-n_at = lambda lam: float(predict_index_buchdahl(nd_bk7, vd_bk7, dPgF_bk7, np.array([lam]))[0])
-print(f"N-BK7 spot checks (reference = Schott datasheet):")
+def n_at(lam):
+    return float(predict_index_buchdahl(nd_bk7, vd_bk7, dPgF_bk7, np.array([lam]))[0])
+
+print("N-BK7 spot checks (reference = Schott datasheet):")
 print(f"  n(F=0.4861)  pred={n_at(LAMBDA_F):.6f}   ref=1.522380   err={n_at(LAMBDA_F)-1.52238:+.2e}")
 print(f"  n(d=0.5876)  pred={n_at(LAMBDA_D):.6f}   ref=1.516800   err={n_at(LAMBDA_D)-1.51680:+.2e}")
 print(f"  n(C=0.6563)  pred={n_at(LAMBDA_C):.6f}   ref=1.514320   err={n_at(LAMBDA_C)-1.51432:+.2e}")
 print()
-print(f"Full-band fit quality (400-700 nm, N=200):")
+print("Full-band fit quality (400-700 nm, N=200):")
 print(f"  Max |error|: {err_max:.2e}    (budget {INDEX_ACCURACY_SPEC:.0e})   {verdict(err_max < INDEX_ACCURACY_SPEC)}")
 print(f"  RMS error:   {err_rms:.2e}")
 """))
@@ -219,7 +223,8 @@ a1.plot(lam_scan*1e3, n_true, 'k-',  lw=2,   label='Sellmeier (truth)')
 a1.plot(lam_scan*1e3, n_pred, 'r--', lw=1.5, label='Buchdahl (3-param)')
 a1.set_ylabel('Refractive index n')
 a1.set_title(f'N-BK7: Buchdahl vs Sellmeier   (max err = {err_max:.2e})')
-a1.legend(); a1.grid(alpha=0.3)
+a1.legend()
+a1.grid(alpha=0.3)
 
 a2.plot(lam_scan*1e3, err, 'r-', lw=1.3)
 a2.axhline( INDEX_ACCURACY_SPEC, color='g', ls=':', lw=1, label=f'budget ±{INDEX_ACCURACY_SPEC:.0e}')
@@ -227,8 +232,10 @@ a2.axhline(-INDEX_ACCURACY_SPEC, color='g', ls=':', lw=1)
 a2.axhline(0, color='k', lw=0.5)
 a2.set_xlabel('Wavelength (nm)')
 a2.set_ylabel('pred − truth')
-a2.legend(); a2.grid(alpha=0.3)
-plt.tight_layout(); plt.show()
+a2.legend()
+a2.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
 """))
 
 cells.append(md(
@@ -280,7 +287,113 @@ print(f"  n(C) = {be.to_numpy(mg.n(LAMBDA_C)).item():.6f}")
 """))
 
 cells.append(md(
-"""## 2. Test bench — a cemented doublet, designed per glass pair
+"""## 2. Catalog loader — parameters from Sellmeier data
+
+Every glass in this notebook is described by the same three-parameter
+record: $(n_d, V_d, \\Delta P_{g,F})$, optionally accompanied by the full
+partial dispersion $P_{g,F}$ and the raw Sellmeier coefficients. We
+recompute these from the Optiland YAML catalogs using the **exact same
+pipeline as `model_glass_buchdahl.ipynb`** — no hand-typed nominal
+values. This keeps definitions consistent across notebooks and avoids
+silent sign errors on $\\Delta P_{g,F}$.
+"""))
+
+cells.append(code(
+"""# ------------------------------------------------------------------
+#  Catalog access -- reused by baseline loader, CDGM sweep, training
+#  hull check and the Sellmeier cross-check. Defined once, here.
+# ------------------------------------------------------------------
+if "OPTILAND_DB_ROOT" in os.environ:
+    DB_ROOT = Path(os.environ["OPTILAND_DB_ROOT"])
+else:
+    _spec = importlib.util.find_spec("optiland")
+    if _spec is None or _spec.origin is None:
+        raise RuntimeError(
+            "optiland not installed. Either `pip install optiland` or set "
+            "OPTILAND_DB_ROOT to the database directory."
+        )
+    DB_ROOT = Path(_spec.origin).parent / "database"
+GLASS_ROOT = DB_ROOT / "data-nk" / "glass"
+
+
+def _sellmeier_n(lam, B1, C1, B2, C2, B3, C3):
+    wl2 = lam ** 2
+    return np.sqrt(1 + B1*wl2/(wl2-C1) + B2*wl2/(wl2-C2) + B3*wl2/(wl2-C3))
+
+
+def extract_record(yml_path: Path):
+    \"\"\"Load one Optiland YAML glass file and recompute (nd, Vd, PgF,
+    dPgF) from its Sellmeier formula. Returns None if the file uses a
+    non-Sellmeier formula or is malformed. Raw coefficients are kept so
+    downstream cells can do Sellmeier-truth cross-checks without
+    re-parsing.\"\"\"
+    with yml_path.open("r", encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    data_blocks = doc.get("DATA", [])
+    if not data_blocks:
+        return None
+    formula = data_blocks[0]
+    if formula.get("type") != "formula 2":
+        return None
+    coeffs = formula.get("coefficients", "").split()
+    if len(coeffs) != 7:
+        return None
+    wr = formula.get("wavelength_range", "").split()
+    if len(wr) != 2:
+        return None
+    B1, C1 = float(coeffs[1]), float(coeffs[2])
+    B2, C2 = float(coeffs[3]), float(coeffs[4])
+    B3, C3 = float(coeffs[5]), float(coeffs[6])
+    lam_lo, lam_hi = float(wr[0]), float(wr[1])
+    # Must span at least g..C so the partial dispersion is well defined.
+    if lam_lo > LAMBDA_g or lam_hi < LAMBDA_C:
+        return None
+    sm = (B1, C1, B2, C2, B3, C3)
+    nd = _sellmeier_n(LAMBDA_D, *sm)
+    nF = _sellmeier_n(LAMBDA_F, *sm)
+    nC = _sellmeier_n(LAMBDA_C, *sm)
+    ng = _sellmeier_n(LAMBDA_g, *sm)
+    dn_FC = nF - nC
+    if dn_FC < 1e-12:
+        return None
+    vd   = (nd - 1.0) / dn_FC
+    PgF  = (ng - nF) / dn_FC
+    dPgF = PgF - (0.6438 - 0.001682 * vd)
+    return dict(
+        name=yml_path.stem, catalog=yml_path.parent.name,
+        nd=float(nd), vd=float(vd),
+        PgF=float(PgF), dPgF=float(dPgF),
+        sellmeier=sm,
+        wavelength_range=(lam_lo, lam_hi),
+    )
+
+
+def get_glass_by_name(catalog: str, name: str) -> dict:
+    yml = GLASS_ROOT / catalog / f"{name}.yml"
+    rec = extract_record(yml)
+    if rec is None:
+        raise RuntimeError(f"Could not load {catalog}/{name} (path: {yml})")
+    return rec
+
+
+def as_model_glass(rec: dict, label: str) -> "BuchdahlModelGlass":
+    \"\"\"Wrap a (nd, Vd, dPgF) record as a Buchdahl-driven material.\"\"\"
+    return BuchdahlModelGlass(rec["nd"], rec["vd"], rec["dPgF"], label=label)
+
+
+# Baseline pair for the test bench, straight from the Schott catalog.
+NLAK14 = get_glass_by_name("schott", "N-LAK14")
+NSF2   = get_glass_by_name("schott", "N-SF2")
+
+print("Baseline pair recomputed from Schott Sellmeier data:")
+print(f"  {'':18}{'nd':>10}{'Vd':>10}{'PgF':>10}{'dPgF':>12}")
+for name, g in [("N-LAK14 (crown)", NLAK14), ("N-SF2   (flint)", NSF2)]:
+    print(f"  {name:18}{g['nd']:>10.4f}{g['vd']:>10.2f}"
+          f"{g['PgF']:>10.4f}{g['dPgF']:>+12.4f}")
+"""))
+
+cells.append(md(
+"""## 3. Test bench — a cemented doublet, designed per glass pair
 
 To exercise the model we need a concrete optical system. We use a
 cemented doublet at F/6, **EFL = 20 mm**, and **design the achromat per
@@ -298,17 +411,17 @@ The figure of merit is the **secondary spectrum**
 
 $$S = \\big|\\text{BFL}(\\lambda_g) - \\text{BFL}(\\lambda_d)\\big|$$
 
-(Conrady estimate $S \\approx f / 2200 \\approx 9\\,\\mu m$ at $f = 20$ mm
-for an ordinary matched-partial-dispersion achromat.) A starter pair
-for the test bench is N-LAK14 + N-SF2 — nothing special about this
-choice, it's just a well-known reference point.
+The Conrady $f/2200 \\approx 9\\,\\mu m$ rule is an order-of-magnitude
+reference for an idealized thin achromat; it is **not** a guarantee for
+this fixed-shape, fixed-interface test bench. The measured baseline is
+therefore used only as an internal reference for this replacement
+experiment. A starter pair is N-LAK14 + N-SF2 — nothing special about
+this choice, just a well-known reference point.
 """))
 
 cells.append(code(
-"""# Schott catalog values for the pair we will replace (from main notebook
-# data loader: recomputed via Sellmeier + Schott normal line)
-NLAK14 = dict(nd=1.6968, vd=55.41, dPgF=-0.0087)
-NSF2   = dict(nd=1.6477, vd=33.82, dPgF=-0.0087)
+"""# NLAK14 and NSF2 were loaded from Schott Sellmeier data in the
+# previous cell (dict with nd, vd, PgF, dPgF, sellmeier, ...).
 
 
 def build_doublet(crown_material, flint_material,
@@ -368,13 +481,9 @@ def design_achromat(crown_material, flint_material,
       - EFL(d)               = target_efl
       - BFL(F) - BFL(C)      = 0           (primary achromatic condition)
 
-    r2 (cemented interface) stays fixed — it is a shape / bending DOF that
-    affects spherical aberration but not first-order color or focal length
-    at the level we care about here.
-
-    After design, the only residual chromatic error is the *secondary
-    spectrum* — exactly what partial dispersion ($\\Delta P_{g,F}$)
-    controls. That is the metric we optimize downstream.
+    r2 (cemented interface) stays fixed. After design, the only residual
+    chromatic error is the secondary spectrum — exactly what partial
+    dispersion (dPgF) controls.
     \"\"\"
     from scipy.optimize import fsolve
 
@@ -403,7 +512,7 @@ def design_achromat(crown_material, flint_material,
 # -----------------------------------------------------------------
 #  Fast numpy paraxial path — bypasses Optiland's per-call overhead
 #  inside the fsolve loop. Same math, just without building an Optic
-#  every iteration. Used for the 259-CDGM sweep, the 441-cell
+#  every iteration. Used for the CDGM sweep, the 441-cell
 #  heatmap, and the 200-sample Monte Carlo.
 #
 #  Optiland is still used for the baseline/optimum/winner final
@@ -479,8 +588,8 @@ def secondary_spectrum(lens):
 
 
 # Design the baseline achromat for N-LAK14 + N-SF2 at target EFL
-crown0 = BuchdahlModelGlass(**NLAK14, label="N-LAK14 (model)")
-flint0 = BuchdahlModelGlass(**NSF2,   label="N-SF2 (model)")
+crown0 = as_model_glass(NLAK14, label="N-LAK14 (model)")
+flint0 = as_model_glass(NSF2,   label="N-SF2 (model)")
 baseline, (r1_base, r3_base) = design_achromat(crown0, flint0,
                                                target_efl=TARGET_EFL)
 
@@ -492,7 +601,7 @@ sec0_um = sec0 * 1e3
 efl0    = float(baseline.paraxial.f2())
 epd0    = float(baseline.paraxial.EPD())
 
-print(f"Baseline achromat: N-LAK14 + N-SF2  (designed, not inherited)")
+print("Baseline achromat: N-LAK14 + N-SF2  (designed, not inherited)")
 print(f"  Design targets:  EFL={TARGET_EFL:.2f} mm,  AxColor=0,  r2 fixed")
 print(f"  Solved:          r1 = {r1_base:+.4f} mm,  r3 = {r3_base:+.4f} mm")
 print()
@@ -502,9 +611,9 @@ print(f"  Primary color:   AxColor = BFL(F)-BFL(C) = {ax0_um:+.3f} um   (should 
 print(f"  Secondary color: max|BFL(lam)-BFL(d)|    = {sec0_um:7.2f} um   <- headline metric")
 print()
 print(f"Baseline benchmark  S_0 = {sec0_um:.2f} um  "
-      f"(Conrady estimate ~9 um; N-LAK14/N-SF2 have matched dPgF so")
-print(f"                   they sit near the 'ordinary achromat' point — "
-      f"useful as a reference)")
+      "(internal reference for this fixed-shape test bench;")
+print("                   Conrady f/2200 ~ 9 um is an idealized thin-achromat")
+print("                   estimate and need not match this configuration)")
 
 # --- Verification: fast numpy path matches Optiland ---
 r1_fast, r3_fast = design_achromat_fast(
@@ -517,14 +626,14 @@ sec_fast_um = secondary_spectrum_fast(
     NSF2['nd'],   NSF2['vd'],   NSF2['dPgF'],
 ) * 1e3
 
-print(f"\\nFast numpy path vs. Optiland (used in the 18,000+ inner-loop calls):")
+print("\\nFast numpy path vs. Optiland (used in the 18,000+ inner-loop calls):")
 print(f"  r1:  optiland={r1_base:+.6f}  fast={r1_fast:+.6f}  "
       f"diff={r1_fast - r1_base:+.2e}")
 print(f"  r3:  optiland={r3_base:+.6f}  fast={r3_fast:+.6f}  "
       f"diff={r3_fast - r3_base:+.2e}")
 print(f"  S :  optiland={sec0_um:7.4f}  fast={sec_fast_um:7.4f}  "
       f"diff={sec_fast_um - sec0_um:+.2e}")
-print(f"  (Tolerance: diffs should be < 1e-4 mm or 1e-3 um)")
+print("  (Tolerance: diffs should be < 1e-4 mm or 1e-3 um)")
 """))
 
 cells.append(md(
@@ -542,7 +651,7 @@ plt.show()
 """))
 
 cells.append(md(
-"""## 3. What does the model predict the best crown should be?
+"""## 4. What does the model predict the best crown should be?
 
 This step asks the Buchdahl model directly: *given freedom to vary
 $(n_d, V_d, \\Delta P_{g,F})$ continuously within the training domain,
@@ -552,19 +661,84 @@ optimum should sit at anomalous dispersion), and second, give us a
 reference point for **Claim D** (the gap between model-ideal and real
 catalog).
 
-The search is bounded to the training domain, so the returned optimum
-is a glass the model was fit to predict — not an extrapolation.
+The search is bounded to rectangular parameter ranges for numerical
+protection, but the **true** training domain is the 3-D convex hull of
+the real glasses used to fit the regression. An optimum that sits inside
+the hull is a plausible *physical* target; one outside is extrapolation
+— model-space guidance, not a claim that a missing glass exists.
+"""))
+
+cells.append(code(
+"""# ---------------------------------------------------------------
+#  Training-hull check: we apply the same wavelength filter as
+#  `model_glass_buchdahl.ipynb` (Sellmeier range covering 0.365-2.3 um)
+#  so the resulting hull approximates the actual regression training set
+#  rather than a looser catalog proxy.
+# ---------------------------------------------------------------
+from scipy.spatial import ConvexHull
+
+TRAIN_CATALOGS = ["schott", "cdgm", "hoya", "ohara", "sumita"]
+TRAIN_LAM_LO   = 0.36501   # um -- Sellmeier range lower edge (main notebook)
+TRAIN_LAM_HI   = 2.30      # um -- Sellmeier range upper edge (main notebook)
+
+
+def passes_training_filter(rec):
+    lo, hi = rec["wavelength_range"]
+    return lo <= TRAIN_LAM_LO and hi >= TRAIN_LAM_HI
+
+
+train_glasses = []
+train_skipped_range = 0
+for cat in TRAIN_CATALOGS:
+    cat_root = GLASS_ROOT / cat
+    if not cat_root.exists():
+        continue
+    for yml in cat_root.rglob("*.yml"):
+        rec = extract_record(yml)
+        if rec is None:
+            continue
+        if not passes_training_filter(rec):
+            train_skipped_range += 1
+            continue
+        train_glasses.append(rec)
+
+train_pts = np.column_stack([
+    np.array([g["nd"]   for g in train_glasses]),
+    np.array([g["vd"]   for g in train_glasses]),
+    np.array([g["dPgF"] for g in train_glasses]),
+])
+train_hull = ConvexHull(train_pts)
+
+
+def inside_training_hull(nd, vd, dPgF, tol=1e-10):
+    p = np.array([nd, vd, dPgF])
+    return bool(np.max(train_hull.equations[:, :-1] @ p
+                       + train_hull.equations[:, -1]) <= tol)
+
+
+print(f"Training hull built from {len(train_glasses)} catalog glasses")
+print(f"  catalogs:        {', '.join(TRAIN_CATALOGS)}")
+print(f"  wavelength cut:  Sellmeier must cover [{TRAIN_LAM_LO:.3f}, "
+      f"{TRAIN_LAM_HI:.2f}] um")
+print(f"  skipped for range:      {train_skipped_range}")
+print(f"  nd   range: [{train_pts[:, 0].min():.3f}, {train_pts[:, 0].max():.3f}]")
+print(f"  Vd   range: [{train_pts[:, 1].min():.2f}, {train_pts[:, 1].max():.2f}]")
+print(f"  dPgF range: [{train_pts[:, 2].min():+.4f}, {train_pts[:, 2].max():+.4f}]")
+print(f"  hull facets: {len(train_hull.simplices)}")
+print()
+print("NOTE: this is an approximate catalog-derived training hull. It applies")
+print("      the same wavelength filter as `model_glass_buchdahl.ipynb` but may")
+print("      not reproduce every sanity cut used during regression training, so")
+print("      it should be treated as an approximation of the training domain,")
+print("      not an exact reconstruction.")
 """))
 
 cells.append(code(
 """from scipy.optimize import minimize
 
-# Training-domain bounds: the Buchdahl regression was fit on 543 catalog
-# glasses whose parameters span roughly these ranges. Letting the
-# optimizer wander outside would produce a "virtual optimum" that
-# extrapolates the regression into unvalidated territory — nice-looking
-# but unphysical. Bounds force the optimum to be a glass the Buchdahl
-# model can actually predict.
+# Rectangular bounds as a first-pass numerical guard. The real
+# training domain is the convex hull built in the previous cell;
+# membership is checked after the optimum is found.
 GLASS_BOUNDS = [
     (1.44, 2.00),   # nd:   lowest = fluor-crowns (FK), highest = dense flints
     (20.0, 95.0),   # Vd
@@ -602,24 +776,39 @@ for name, val, (lo, hi) in zip(["nd","Vd","dPgF"], res.x, GLASS_BOUNDS):
 r1_opt, r3_opt = design_achromat_fast(nd_opt, vd_opt, dPgF_opt,
                                        NSF2['nd'], NSF2['vd'], NSF2['dPgF'])
 crown_opt = BuchdahlModelGlass(nd_opt, vd_opt, dPgF_opt, label="ideal model")
-flint_opt = BuchdahlModelGlass(**NSF2, label="N-SF2 (model)")
+flint_opt = as_model_glass(NSF2, label="N-SF2 (model)")
 lens_opt = build_doublet(crown_opt, flint_opt, r1=r1_opt, r3=r3_opt)
 ax_opt, _ = axial_color(lens_opt)
 sec_opt = secondary_spectrum(lens_opt)
 
 print(f"Optimizer converged: nit={res.nit}, final sec-spec^2 = {res.fun:.3e}")
 print()
-print(f"Ideal model crown glass (within training domain, fixed EFL={TARGET_EFL:.2f}):")
+print(f"Continuous-model crown target (within rectangular bounds, fixed EFL={TARGET_EFL:.2f};")
+print("hull membership checked below — rectangular bounds are only a numerical guard):")
 print(f"  nd   = {nd_opt:.4f}   bounds {GLASS_BOUNDS[0]}   (N-LAK14: {NLAK14['nd']:.4f})")
 print(f"  Vd   = {vd_opt:.2f}   bounds {GLASS_BOUNDS[1]}    (N-LAK14: {NLAK14['vd']:.2f})")
 print(f"  dPgF = {dPgF_opt:+.4f}  bounds {GLASS_BOUNDS[2]}  (N-LAK14: {NLAK14['dPgF']:+.4f})"
-      f"  <- anomalous partial dispersion")
+      "  <- anomalous partial dispersion")
 if at_boundary:
     print(f"\\n  NOTE: optimum is at the boundary on: {', '.join(at_boundary)}")
-    print(f"        => the true optimum likely lies outside the training domain")
-    print(f"        (i.e. no real glass satisfies it; apo design needs >2 elements)")
+    print("        => the true optimum likely lies outside the training domain")
+    print("        (i.e. no real glass satisfies it; apo design needs >2 elements)")
+
+# Training-domain hull check: is this point a physical glass target,
+# or pure extrapolation in model space?
+optimum_inside_hull = inside_training_hull(nd_opt, vd_opt, dPgF_opt)
 print()
-print(f"Redesigned achromat:")
+print(f"Inside 3-D training convex hull: {optimum_inside_hull}")
+if not optimum_inside_hull:
+    print("  => the continuous optimum lies OUTSIDE the catalog's 3-D footprint.")
+    print("     Interpret it as virtual design guidance in model space, NOT as a")
+    print("     proof that a manufacturable real glass with these parameters exists.")
+else:
+    print("  => the optimum is inside the training hull, i.e. the model is being")
+    print("     evaluated where it was fit. A close real glass is plausible.")
+
+print()
+print("Redesigned achromat:")
 print(f"  r1 = {r1_opt:+.4f} mm,  r3 = {r3_opt:+.4f} mm")
 print(f"  EFL = {float(lens_opt.paraxial.f2()):.4f} mm   "
       f"(target {TARGET_EFL:.2f})")
@@ -629,19 +818,23 @@ print(f"  Secondary spec   = {sec_opt*1e3:7.2f} um   "
 """))
 
 cells.append(md(
-"""**Sanity check (physical direction).** A well-known property of
-apochromatic glass pairs is that the crown must have **more anomalous
-partial dispersion** than the flint (i.e. $\\Delta P_{g,F}$ further from
-zero, in the opposite sign). If the Buchdahl model is physically
-meaningful, the optimizer should move $\\Delta P_{g,F}$ in that direction.
-Check the printed $\\Delta P_{g,F}$ vs. N-LAK14's $-0.0087$ and the flint
-N-SF2's $-0.0087$ — the optimum should push towards positive (opposite
-sign from the flint). That it does is the first piece of evidence that
-the model isn't just curve-fitting — it is encoding physics.
+"""**Sanity check (physical direction).** The relevant physical quantity
+is not the sign of $\\Delta P_{g,F}$ alone. $\\Delta P_{g,F}$ is a
+deviation from the Schott normal line; the partial dispersion that
+actually drives Conrady's secondary-spectrum expression is
+
+$$P_{g,F} = 0.6438 - 0.001682\\, V_d + \\Delta P_{g,F}.$$
+
+For a fixed flint, the crown replacement should move the pair toward a
+combination of $V_d$ and $P_{g,F}$ that reduces the residual g-line
+focus after F/C achromatization. The useful diagnostics are therefore
+the optimum's $V_d$ (should rise toward the fluor-crown range) and its
+$P_{g,F}$ relative to the flint's, not the isolated sign of $\\Delta
+P_{g,F}$.
 """))
 
 cells.append(md(
-"""## 4. Claim C — ranking with the model matches known design practice
+"""## 5. Claim C — ranking with the model matches known design practice
 
 For each CDGM glass, **redesign the achromat** from scratch (solve its
 own $(r_1, r_3)$ at the target EFL) and measure the secondary spectrum
@@ -659,62 +852,18 @@ would fail.
 """))
 
 cells.append(code(
-"""# Load Optiland glass catalog (reuses logic from model_glass_buchdahl.ipynb)
-if "OPTILAND_DB_ROOT" in os.environ:
-    DB_ROOT = Path(os.environ["OPTILAND_DB_ROOT"])
-else:
-    _spec = importlib.util.find_spec("optiland")
-    DB_ROOT = Path(_spec.origin).parent / "database"
-GLASS_ROOT = DB_ROOT / "data-nk" / "glass"
-
-
-def _sellmeier(lam, B1, C1, B2, C2, B3, C3):
-    wl2 = lam ** 2
-    return np.sqrt(1 + B1*wl2/(wl2-C1) + B2*wl2/(wl2-C2) + B3*wl2/(wl2-C3))
-
-
-def extract_record(yml_path: Path):
-    with yml_path.open("r", encoding="utf-8") as f:
-        doc = yaml.safe_load(f)
-    data_blocks = doc.get("DATA", [])
-    if not data_blocks:
-        return None
-    formula = data_blocks[0]
-    if formula.get("type") != "formula 2":
-        return None
-    coeffs = formula.get("coefficients", "").split()
-    if len(coeffs) != 7:
-        return None
-    wr = formula.get("wavelength_range", "").split()
-    if len(wr) != 2:
-        return None
-    B1, C1 = float(coeffs[1]), float(coeffs[2])
-    B2, C2 = float(coeffs[3]), float(coeffs[4])
-    B3, C3 = float(coeffs[5]), float(coeffs[6])
-    nd = _sellmeier(LAMBDA_D, B1, C1, B2, C2, B3, C3)
-    nF = _sellmeier(LAMBDA_F, B1, C1, B2, C2, B3, C3)
-    nC = _sellmeier(LAMBDA_C, B1, C1, B2, C2, B3, C3)
-    ng = _sellmeier(LAMBDA_g, B1, C1, B2, C2, B3, C3)
-    dn_FC = nF - nC
-    if dn_FC < 1e-12:
-        return None
-    vd   = (nd - 1.0) / dn_FC
-    PgF  = (ng - nF) / dn_FC
-    dPgF = PgF - (0.6438 - 0.001682 * vd)
-    return dict(
-        name=yml_path.stem, catalog=yml_path.parent.name,
-        nd=float(nd), vd=float(vd), dPgF=float(dPgF),
-        wavelength_range=(float(wr[0]), float(wr[1])),
-    )
-
-
+"""# Walk the CDGM subdirectory and recompute (nd, Vd, PgF, dPgF) for each
+# glass using the shared extract_record helper defined in Section 2.
 cdgm = []
+n_cdgm_raw = 0
 for yml in (GLASS_ROOT / "cdgm").rglob("*.yml"):
+    n_cdgm_raw += 1
     rec = extract_record(yml)
     if rec is not None:
         cdgm.append(rec)
 
-print(f"Loaded {len(cdgm)} CDGM glasses")
+print(f"Loaded {len(cdgm)} CDGM glasses   "
+      f"(skipped {n_cdgm_raw - len(cdgm)} with non-Sellmeier/short-range data)")
 """))
 
 cells.append(code(
@@ -743,14 +892,22 @@ for g in cdgm:
 print(f"CDGM sweep: {len(cdgm_scored)} glasses scored in {_time.time()-_t0:.1f} s")
 
 cdgm_scored.sort(key=lambda g: g["sec_spec_um"])
-print(f"Ranked {len(cdgm_scored)} CDGM crown candidates by secondary spectrum:")
+n_cdgm = len(cdgm)
+n_scored = len(cdgm_scored)
+n_skipped = n_cdgm - n_scored
+print(f"Loaded {n_cdgm} CDGM glasses")
+print(f"Scored {n_scored} feasible achromat designs")
+print(f"Skipped {n_skipped} non-convergent or ill-conditioned cases")
 print()
-print(f"  {'Rank':<5}{'Name':<12}{'nd':>8}{'Vd':>8}{'dPgF':>9}"
+print("Top 10 CDGM crown candidates, ranked by secondary spectrum:")
+print()
+print(f"  {'Rank':<5}{'Name':<12}{'nd':>8}{'Vd':>8}{'PgF':>8}{'dPgF':>10}"
       f"{'r1':>9}{'r3':>9}{'Sec-spec':>11}")
-print(f"  {'-'*5}{'-'*12}{'-'*8}{'-'*8}{'-'*9}{'-'*9}{'-'*9}{'-'*11}")
+print(f"  {'-'*5}{'-'*12}{'-'*8}{'-'*8}{'-'*8}{'-'*10}{'-'*9}{'-'*9}{'-'*11}")
 for i, g in enumerate(cdgm_scored[:10], 1):
     print(f"  {i:<5}{g['name']:<12}{g['nd']:>8.4f}{g['vd']:>8.2f}"
-          f"{g['dPgF']:>+9.4f}{g['r1']:>9.3f}{g['r3']:>9.3f}"
+          f"{g['PgF']:>8.4f}{g['dPgF']:>+10.4f}"
+          f"{g['r1']:>9.3f}{g['r3']:>9.3f}"
           f"{g['sec_spec_um']:>8.2f} um")
 
 winner = cdgm_scored[0]
@@ -765,20 +922,209 @@ print(f"  {', '.join(fk_like)}")
 """))
 
 cells.append(md(
-"""## 5. Claim B — $\\Delta P_{g,F}$ is the physical driver
+"""### Sellmeier cross-check — do Buchdahl rankings survive real $n(\\lambda)$?
+
+The ranking above uses **Buchdahl-predicted** $n(\\lambda)$ at every step
+— both when solving $(r_1, r_3)$ and when evaluating $S$. To move Claim
+C from *model-self-consistent* to *catalog-consistent* we replace
+Buchdahl with the per-glass Sellmeier formulas shipped with the Optiland
+YAML files, in two forms:
+
+1. **Crown-only cross-check.** Replace the crown's $n(\\lambda)$ with its
+   Sellmeier formula; keep N-SF2 on Buchdahl. This isolates how well
+   Buchdahl predicts the candidate crown, which is the prediction the
+   ranking actually depends on.
+2. **Full cross-check.** Replace both the crown *and* the N-SF2 flint
+   with their Sellmeier formulas. This is the closest thing to a real
+   catalog raytrace and gives an absolute reference $S_\\text{full}$
+   that does not rely on Buchdahl at all.
+
+What to read:
+
+- The **ordering** across the top candidates should be preserved — that
+  is what validates "Buchdahl picks the right glasses".
+- The **absolute** $S$ typically shifts by a few $\\mu$m under Sellmeier;
+  this is the prediction error the ranking is absorbing, and is
+  expected given the regression's per-glass residuals.
+"""))
+
+cells.append(code(
+"""from scipy.optimize import fsolve as _fsolve
+
+
+def _n_sellmeier_vec(lams, sm):
+    B1, C1, B2, C2, B3, C3 = sm
+    return np.array([_sellmeier_n(lam, B1, C1, B2, C2, B3, C3)
+                     for lam in lams])
+
+
+def design_achromat_sellmeier(sm_c, nd_f, vd_f, dPgF_f,
+                              target_efl=TARGET_EFL, r2=-7.94140,
+                              t1=0.434, t2=0.321,
+                              r1_init=12.38401, r3_init=-48.44396):
+    \"\"\"Solve (r1, r3) with Sellmeier n(lambda) for the crown and
+    Buchdahl n(lambda) for the flint. Returns (r1, r3).\"\"\"
+    lams = np.array([LAMBDA_F, LAMBDA_D, LAMBDA_C])
+    n_c = _n_sellmeier_vec(lams, sm_c)
+    n_f = predict_index_buchdahl(nd_f, vd_f, dPgF_f, lams)
+
+    def residuals(radii):
+        r1, r3 = radii
+        efl_d, _ = paraxial_trace(r1, r2, r3, t1, t2, n_c[1], n_f[1])
+        _, bfl_F = paraxial_trace(r1, r2, r3, t1, t2, n_c[0], n_f[0])
+        _, bfl_C = paraxial_trace(r1, r2, r3, t1, t2, n_c[2], n_f[2])
+        return [efl_d - target_efl, bfl_F - bfl_C]
+
+    sol, info, ier, msg = _fsolve(residuals, x0=[r1_init, r3_init],
+                                  full_output=True, xtol=1e-10)
+    if ier != 1:
+        raise RuntimeError(f"Sellmeier achromat design failed: {msg}")
+    return float(sol[0]), float(sol[1])
+
+
+def secondary_spectrum_sellmeier(r1, r3, sm_c, nd_f, vd_f, dPgF_f,
+                                 r2=-7.94140, t1=0.434, t2=0.321):
+    lams = np.array([LAMBDA_g, LAMBDA_D])
+    n_c = _n_sellmeier_vec(lams, sm_c)
+    n_f = predict_index_buchdahl(nd_f, vd_f, dPgF_f, lams)
+    _, bfl_g = paraxial_trace(r1, r2, r3, t1, t2, n_c[0], n_f[0])
+    _, bfl_d = paraxial_trace(r1, r2, r3, t1, t2, n_c[1], n_f[1])
+    return abs(bfl_g - bfl_d)
+
+
+def design_achromat_full_sellmeier(sm_c, sm_f,
+                                   target_efl=TARGET_EFL, r2=-7.94140,
+                                   t1=0.434, t2=0.321,
+                                   r1_init=12.38401, r3_init=-48.44396):
+    \"\"\"Solve (r1, r3) with Sellmeier n(lambda) for BOTH crown and flint.
+    No Buchdahl prediction enters here -- this is the closest thing to a
+    real catalog raytrace for this test bench.\"\"\"
+    lams = np.array([LAMBDA_F, LAMBDA_D, LAMBDA_C])
+    n_c = _n_sellmeier_vec(lams, sm_c)
+    n_f = _n_sellmeier_vec(lams, sm_f)
+
+    def residuals(radii):
+        r1, r3 = radii
+        efl_d, _ = paraxial_trace(r1, r2, r3, t1, t2, n_c[1], n_f[1])
+        _, bfl_F = paraxial_trace(r1, r2, r3, t1, t2, n_c[0], n_f[0])
+        _, bfl_C = paraxial_trace(r1, r2, r3, t1, t2, n_c[2], n_f[2])
+        return [efl_d - target_efl, bfl_F - bfl_C]
+
+    sol, info, ier, msg = _fsolve(residuals, x0=[r1_init, r3_init],
+                                  full_output=True, xtol=1e-10)
+    if ier != 1:
+        raise RuntimeError(f"full Sellmeier achromat design failed: {msg}")
+    return float(sol[0]), float(sol[1])
+
+
+def secondary_spectrum_full_sellmeier(r1, r3, sm_c, sm_f,
+                                      r2=-7.94140, t1=0.434, t2=0.321):
+    lams = np.array([LAMBDA_g, LAMBDA_D])
+    n_c = _n_sellmeier_vec(lams, sm_c)
+    n_f = _n_sellmeier_vec(lams, sm_f)
+    _, bfl_g = paraxial_trace(r1, r2, r3, t1, t2, n_c[0], n_f[0])
+    _, bfl_d = paraxial_trace(r1, r2, r3, t1, t2, n_c[1], n_f[1])
+    return abs(bfl_g - bfl_d)
+
+
+TOP_K = 10
+print(f"Sellmeier cross-check for the top {TOP_K} CDGM candidates")
+print("  S_Buchdahl  : Buchdahl n(lambda) for crown AND flint (same as ranking)")
+print("  S_crown-Sm  : Sellmeier for crown, Buchdahl for flint")
+print("  S_full      : Sellmeier for crown AND flint  (real catalog raytrace)")
+print()
+print(f"  {'Rank':<5}{'Name':<12}{'S_Buchdahl':>13}{'S_crown-Sm':>13}"
+      f"{'S_full':>11}{'full-B':>10}")
+print(f"  {'-'*5}{'-'*12}{'-'*13}{'-'*13}{'-'*11}{'-'*10}")
+
+rows_xc = []
+for i, g in enumerate(cdgm_scored[:TOP_K], 1):
+    # Crown-only (keeps flint on Buchdahl)
+    try:
+        r1_s, r3_s = design_achromat_sellmeier(
+            g["sellmeier"], NSF2['nd'], NSF2['vd'], NSF2['dPgF'],
+        )
+        S_crown_um = secondary_spectrum_sellmeier(
+            r1_s, r3_s, g["sellmeier"],
+            NSF2['nd'], NSF2['vd'], NSF2['dPgF'],
+        ) * 1e3
+    except Exception:
+        S_crown_um = np.nan
+    # Full Sellmeier (crown AND flint)
+    try:
+        r1_f, r3_f = design_achromat_full_sellmeier(
+            g["sellmeier"], NSF2["sellmeier"],
+        )
+        S_full_um = secondary_spectrum_full_sellmeier(
+            r1_f, r3_f, g["sellmeier"], NSF2["sellmeier"],
+        ) * 1e3
+    except Exception:
+        S_full_um = np.nan
+    rows_xc.append((g["name"], g["sec_spec_um"], S_crown_um, S_full_um))
+
+# Rank preservation uses the full Sellmeier column -- that is the most
+# honest measure of "do the same glasses win without any Buchdahl input"
+valid = [(n, b, c, s) for (n, b, c, s) in rows_xc if np.isfinite(s)]
+order_b = [n for n, b, c, s in sorted(valid, key=lambda r: r[1])]
+order_s = [n for n, b, c, s in sorted(valid, key=lambda r: r[3])]
+top3_b = set(order_b[:3])
+top3_s = set(order_s[:3])
+
+for i, (name, b, c, s) in enumerate(rows_xc, 1):
+    c_str = f"{c:>10.2f} um" if np.isfinite(c) else f"{'n/a':>13}"
+    if not np.isfinite(s):
+        print(f"  {i:<5}{name:<12}{b:>10.2f} um{c_str}{'n/a':>11}{'n/a':>10}")
+        continue
+    delta_full = s - b
+    print(f"  {i:<5}{name:<12}{b:>10.2f} um{c_str}"
+          f"{s:>8.2f} um{delta_full:>+8.2f} um")
+
+# Rank correlation + top-3 preservation are the summary numbers
+if len(valid) >= 2:
+    rb = {n: r for r, n in enumerate(order_b)}
+    rs = {n: r for r, n in enumerate(order_s)}
+    diffs = [(rb[n] - rs[n]) ** 2 for n in rb]
+    spearman = 1 - 6 * sum(diffs) / (len(rb) * (len(rb)**2 - 1))
+    top3_preserved = (top3_b == top3_s)
+    print()
+    print("Rank preservation (Buchdahl ordering vs. full-Sellmeier ordering):")
+    print(f"  Spearman rank correlation: {spearman:+.3f}")
+    print(f"  Top-3 set preserved:       {top3_preserved}")
+    print(f"    Buchdahl top-3       = {sorted(top3_b)}")
+    print(f"    Full-Sellmeier top-3 = {sorted(top3_s)}")
+    # Median absolute residual over top K -- the scale at which ranking
+    # is "absorbing" Buchdahl prediction noise
+    abs_res = [abs(s - b) for (_, b, _, s) in valid]
+    median_s_residual_um = float(np.median(abs_res))
+    max_s_residual_um    = float(np.max(abs_res))
+    print(f"  Median |S_full - S_Buchdahl|: "
+          f"{median_s_residual_um:.2f} um  "
+          f"(max {max_s_residual_um:.2f} um)")
+else:
+    spearman = np.nan
+    top3_preserved = False
+    median_s_residual_um = float("nan")
+    max_s_residual_um = float("nan")
+"""))
+
+cells.append(md(
+"""## 6. Claim B — partial-dispersion coordinates track $S$
 
 The optimizer and the ranking both independently prefer glasses with
-anomalous partial dispersion. The strongest piece of model validation is
-a direct scatter plot:
+more anomalous partial dispersion and higher $V_d$. The strongest
+single-figure test is a direct scatter plot:
 
-> for *every* CDGM crown, plot the secondary spectrum it achieves in the
-> designed achromat vs. its $\\Delta P_{g,F}$.
+> for every feasible CDGM crown, plot the secondary spectrum achieved
+> in the designed achromat vs. its $\\Delta P_{g,F}$, coloured by $V_d$.
 
-If Buchdahl's 3rd axis is physically meaningful, we should see a clear
-functional dependence $S(\\Delta P_{g,F})$ — roughly U-shaped, minimized
-at a value opposite to the flint's $\\Delta P_{g,F}$. If $\\Delta P_{g,F}$
-were just statistical decoration, the scatter would be random. This is
-the **cleanest visual test** of the claim.
+If Buchdahl's 3rd axis is meaningful, $S$ should vary systematically
+with the crown's anomalous partial dispersion. For this N-SF2 flint
+(which itself has $\\Delta P_{g,F} \\approx +0.0081$), the best CDGM
+crowns move toward **larger positive $\\Delta P_{g,F}$ combined with
+much higher $V_d$** — the fluor-crown corner. The $V_d$ colour on the
+scatter is therefore part of the story, not decoration: the underlying
+physics is $P_{g,F}$ and $V_d$ jointly, with $\\Delta P_{g,F}$ acting as
+a convenient index along that direction.
 """))
 
 cells.append(code(
@@ -790,7 +1136,8 @@ sec_arr  = np.array([g["sec_spec_um"] for g in cdgm_scored])
 fig, ax = plt.subplots(figsize=(8, 5))
 sc = ax.scatter(dP_arr, sec_arr, c=vd_arr, cmap='viridis',
                 s=28, edgecolor='k', linewidth=0.3, alpha=0.85)
-cbar = plt.colorbar(sc, ax=ax); cbar.set_label(r'$V_d$ of crown glass')
+cbar = plt.colorbar(sc, ax=ax)
+cbar.set_label(r'$V_d$ of crown glass')
 
 # Mark flint's dPgF (glass pair physics says S minimizes far from flint)
 ax.axvline(NSF2['dPgF'], color='crimson', ls='--', lw=1.2,
@@ -811,28 +1158,31 @@ ax.axhline(SECSPEC_SPEC_UM, color='green', lw=1, alpha=0.5,
            label=f'apo spec {SECSPEC_SPEC_UM:.0f} um')
 ax.set_xlabel(r'crown $\\Delta P_{g,F}$')
 ax.set_ylabel(r'achievable secondary spectrum $S$ (um)')
-ax.set_title(r'Claim B: $\\Delta P_{g,F}$ drives $S$ — every CDGM crown tested')
-ax.grid(alpha=0.3); ax.legend(loc='upper left', fontsize=9)
-plt.tight_layout(); plt.show()
+ax.set_title(r'Claim B: partial-dispersion coordinates track $S$ (every CDGM crown tested)')
+ax.grid(alpha=0.3)
+ax.legend(loc='upper left', fontsize=9)
+plt.tight_layout()
+plt.show()
 
 # Quantitative check: does dPgF predict S across the catalog?
-# Physics: more anomalous (more positive here, since flint dPgF is negative)
-# => smaller secondary spectrum. Expect strong NEGATIVE correlation.
+# For this N-SF2 test bench, larger positive crown dPgF correlates with
+# high Vd and small S. Expect strong NEGATIVE correlation(dPgF, S).
 corr = float(np.corrcoef(dP_arr, sec_arr)[0, 1])
 strength = ('strong' if abs(corr) > 0.7 else
             'moderate' if abs(corr) > 0.4 else 'weak')
 supports_B = corr < -0.4   # expected sign + meaningful magnitude
 
-print(f"Pearson correlation between crown dPgF and achievable S")
+print("Pearson correlation between crown dPgF and achievable S")
 print(f"across {len(cdgm_scored)} CDGM crowns:")
 print(f"  r = {corr:+.3f}   ({strength} "
       f"{'negative' if corr < 0 else 'positive'})")
 if supports_B:
-    print(f"  Expected sign: NEGATIVE (more anomalous dPgF -> smaller S).")
-    print(f"  Observed: matches expectation -> Claim B supported.")
+    print("  Expected: more anomalous (larger) crown dPgF with this flint")
+    print("            pairs with higher Vd, which together reduce S.")
+    print("  Observed: matches expectation -> Claim B supported.")
 else:
-    print(f"  Does NOT match the expected strong-negative pattern"
-          f" -> Claim B FAILS.")
+    print("  Does NOT match the expected strong-negative pattern"
+          " -> Claim B FAILS.")
 """))
 
 cells.append(code(
@@ -841,7 +1191,7 @@ cells.append(code(
 #  fast solver stored in cdgm_scored).
 crown_cdgm = BuchdahlModelGlass(winner["nd"], winner["vd"], winner["dPgF"],
                                 label=f"CDGM {winner['name']}")
-flint_cdgm = BuchdahlModelGlass(**NSF2, label="N-SF2 (model)")
+flint_cdgm = as_model_glass(NSF2, label="N-SF2 (model)")
 r1_cdgm, r3_cdgm = winner["r1"], winner["r3"]
 lens_cdgm = build_doublet(crown_cdgm, flint_cdgm, r1=r1_cdgm, r3=r3_cdgm)
 ax_cdgm, _  = axial_color(lens_cdgm)
@@ -850,9 +1200,11 @@ sec_opt_um   = sec_opt  * 1e3
 sec_cdgm_um  = sec_cdgm * 1e3
 
 # First-order sanity: all three cases must agree on EFL and EPD
-efl_opt  = float(lens_opt.paraxial.f2());  epd_opt  = float(lens_opt.paraxial.EPD())
-efl_cdgm = float(lens_cdgm.paraxial.f2()); epd_cdgm = float(lens_cdgm.paraxial.EPD())
-print(f"First-order parameters (all three cases designed to the same target):")
+efl_opt  = float(lens_opt.paraxial.f2())
+epd_opt  = float(lens_opt.paraxial.EPD())
+efl_cdgm = float(lens_cdgm.paraxial.f2())
+epd_cdgm = float(lens_cdgm.paraxial.EPD())
+print("First-order parameters (all three cases designed to the same target):")
 print(f"  {'Case':<28} {'EFL (mm)':>9} {'EPD (mm)':>9} {'r1':>8} {'r3':>10}")
 print(f"  {'-'*28} {'-'*9} {'-'*9} {'-'*8} {'-'*10}")
 print(f"  {'Baseline':<28} {efl0:>9.4f} {epd0:>9.4f} {r1_base:>+8.3f} {r3_base:>+10.3f}")
@@ -864,13 +1216,13 @@ improvement_opt  = (sec0_um - sec_opt_um)  / sec0_um * 100
 improvement_cdgm = (sec0_um - sec_cdgm_um) / sec0_um * 100
 
 print("=" * 78)
-print(" Claim D — gap between model optimum and real catalog")
+print(" Claim D — gap between continuous-model target and real catalog")
 print("=" * 78)
 print(f" {'Case':<28}{'AxColor':>10}{'Sec-spec':>11}{'vs base':>10}")
 print(f" {'-'*28}{'-'*10}{'-'*11}{'-'*10}")
 print(f" {'Baseline (N-LAK14)':<28}{ax0_um:>+8.2f} um"
       f"{sec0_um:>8.2f} um{'---':>9}")
-print(f" {'Model-predicted optimum':<28}{ax_opt*1e3:>+8.2f} um"
+print(f" {'Continuous-model target':<28}{ax_opt*1e3:>+8.2f} um"
       f"{sec_opt_um:>8.2f} um{improvement_opt:>+8.0f} %")
 print(f" {'Best real CDGM ' + winner['name']:<28}{ax_cdgm*1e3:>+8.2f} um"
       f"{sec_cdgm_um:>8.2f} um{improvement_cdgm:>+8.0f} %")
@@ -883,19 +1235,25 @@ gap = dict(
     dPgF = winner['dPgF'] - dPgF_opt,
 )
 gap_sec = sec_cdgm_um - sec_opt_um
-print(f" Parameter gap  best-CDGM  -  model-optimum:")
+print(" Parameter gap  best-CDGM  -  model-optimum:")
 print(f"   dnd   = {gap['nd']:+.4f}    dVd = {gap['Vd']:+.2f}    "
       f"ddPgF = {gap['dPgF']:+.4f}")
 print(f" Performance gap:  S({winner['name']}) - S(model_opt) "
       f"= {gap_sec:+.2f} um")
 print()
-print(f" => The Buchdahl model predicts an achievable apo point at"
-      f"\\n    (nd={nd_opt:.3f}, Vd={vd_opt:.1f}, dPgF={dPgF_opt:+.4f}).")
-print(f"    The closest real CDGM glass ({winner['name']}) sits"
-      f"\\n    {gap_sec:.1f} um away in achievable S — i.e. the catalog has a")
-print(f"    gap between the ordinary-achromat cluster and a true apo point.")
-print(f"    This is an **insight only a continuous parametric model can give**;")
-print(f"    discrete catalog lookup cannot reveal it.   Claim D supported.")
+print(f" Training-hull check on continuous optimum: "
+      f"inside = {optimum_inside_hull}")
+print()
+if optimum_inside_hull:
+    print(" => Continuous target lies INSIDE the catalog's 3-D hull, so a real")
+    print("    glass with these parameters is plausible. The gap to the best")
+    print("    CDGM candidate is a concrete catalog-coverage observation.")
+else:
+    print(" => Continuous target lies OUTSIDE the catalog's 3-D hull. Treat it as")
+    print("    extrapolative DESIGN GUIDANCE in model space, NOT as proof that a")
+    print("    physically available but missing glass exists. The comparison to")
+    print("    the best CDGM candidate measures the distance from a model-space")
+    print("    target to the catalog — it does NOT validate a missing glass.")
 """))
 
 cells.append(md(
@@ -974,7 +1332,8 @@ ax.set_ylabel(r'$\\Delta$ BFL (um)  =  BFL($\\lambda$) - BFL($\\lambda_d$)')
 ax.set_title('Chromatic focal shift — all three are primary achromats by design')
 ax.legend(loc='best', fontsize=9)
 ax.grid(alpha=0.3)
-plt.tight_layout(); plt.show()
+plt.tight_layout()
+plt.show()
 """))
 
 cells.append(md(
@@ -997,18 +1356,22 @@ level. Curves that dip below the band's top at g-line meet spec.
 """))
 
 cells.append(md(
-"""## 6. Claim E — the model supports $(n_d, V_d)$ tolerancing
+"""## 7. Claim E — the model is locally smooth enough for sensitivity studies
 
-To be useful for tolerance analysis, the Buchdahl model has to be
-**locally smooth** around any nominal glass — small perturbations in
-$(n_d, V_d)$ must produce small, continuous changes in $S$, with no
-jumps, NaNs, or `fsolve` failures that would reveal overfitting or
-numerical fragility in the regression.
+To be useful as a **first-order surrogate** for $(n_d, V_d)$ sensitivity
+analysis, the Buchdahl model has to be **locally smooth** around any
+nominal glass: small perturbations in $(n_d, V_d)$ must produce small,
+continuous changes in $S$, with no jumps, NaNs, or `fsolve` failures.
+That is what the 2-D heatmap below tests.
 
-The direct test is a **2-D sweep** over $(\\Delta n_d, \\Delta V_d)$
-around the winner glass, redesigning the achromat at each grid point
-and recording $S$. A smooth gradient across the heatmap = pass; any
-discontinuity or black/NaN cell = fail.
+A smooth heatmap does **not** by itself validate a full manufacturing
+tolerance model. Real melt-to-melt variation has covariance structure
+between $n_d$, $V_d$ and $\\Delta P_{g,F}$ that a grid of independent
+perturbations cannot represent, and the absolute yield number depends on
+catalog-specific $\\sigma$ values that we do not claim to reproduce here.
+What this section establishes is narrower and more honest: the Buchdahl
+surrogate is **locally numerically well-behaved**, which is a necessary
+pre-condition for doing any tolerance study on top of it.
 
 Perturbation box: $\\Delta n_d \\in [-0.003, +0.003]$,
 $\\Delta V_d \\in [-1.5, +1.5]$. This comfortably covers Schott's
@@ -1073,9 +1436,11 @@ gs = fig.add_gridspec(1, 3, width_ratios=[2.1, 1, 1], wspace=0.3)
 ax_h = fig.add_subplot(gs[0, 0])
 im = ax_h.imshow(
     S_grid, origin='lower', aspect='auto', cmap='viridis',
-    extent=[dv_grid.min(), dv_grid.max(), dn_grid.min(), dn_grid.max()],
+    extent=(float(dv_grid.min()), float(dv_grid.max()),
+            float(dn_grid.min()), float(dn_grid.max())),
 )
-cbar = plt.colorbar(im, ax=ax_h); cbar.set_label('S (um)')
+cbar = plt.colorbar(im, ax=ax_h)
+cbar.set_label('S (um)')
 ax_h.set_xlabel(r'$\\Delta V_d$')
 ax_h.set_ylabel(r'$\\Delta n_d$')
 ax_h.set_title(f'S around {winner["name"]}')
@@ -1117,10 +1482,11 @@ cells.append(md(
 - **Printed max gradients**: order-of-magnitude sensitivity — useful to
   compare against Schott tolerance grades.
 
-If the heatmap is smooth, we've shown that the Buchdahl model's
-regression outputs are locally well-behaved in $(n_d, V_d)$ around a
-real glass, which is the prerequisite for any meaningful Monte Carlo or
-sensitivity analysis downstream. **Claim E supported**.
+If the heatmap is smooth and the 1-D slices are monotone, the Buchdahl
+surrogate is **locally well-behaved** in $(n_d, V_d)$ around a real
+glass — suitable as a first-order surrogate for sensitivity studies,
+pending real melt-data covariance validation before it can be used as a
+full manufacturing tolerance model.
 
 ---
 
@@ -1164,7 +1530,7 @@ yield_pct = 100.0 * in_spec.sum() / finite.sum()
 print(f"Monte Carlo tolerance ({finite.sum()}/{N_MC} samples converged, "
       f"Vd ~ N({winner['vd']:.2f}, {vd_sigma}))")
 print("-" * 64)
-print(f"  Secondary spectrum distribution:")
+print("  Secondary spectrum distribution:")
 print(f"    mean +/- std:     {sec_mc_um[finite].mean():6.2f} +/- "
       f"{sec_mc_um[finite].std():.2f} um")
 print(f"    5 / 50 / 95 pct:  {p05:6.2f}  /  {p50:6.2f}  /  {p95:6.2f} um")
@@ -1174,11 +1540,16 @@ print(f"    {in_spec.sum()} / {finite.sum()} pass  =  {yield_pct:5.1f} %"
       f"   (target {MC_YIELD_TARGET*100:.0f}%)   "
       f"{verdict(yield_pct >= MC_YIELD_TARGET*100)}")
 if yield_pct >= MC_YIELD_TARGET * 100:
-    print(f"    Margin from 95th-pct to spec edge: "
+    print("    Margin from 95th-pct to spec edge: "
           f"{SECSPEC_SPEC_UM - p95:+.2f} um")
+elif sec_cdgm_um > SECSPEC_SPEC_UM:
+    print("    Nominal design is already out of spec "
+          f"({sec_cdgm_um:.1f} um > {SECSPEC_SPEC_UM:.0f} um),")
+    print("    so tightening Vd tolerance alone cannot fix yield. Requires a")
+    print("    different glass pair, an extra element, or a relaxed spec.")
 else:
-    print(f"    Yield below target: supplier Vd spec must tighten, "
-          f"or redesign needed.")
+    print("    Nominal meets spec but yield is below target: supplier Vd")
+    print("    tolerance must tighten, or redesign for less Vd sensitivity.")
 """))
 
 cells.append(code(
@@ -1204,15 +1575,21 @@ ax.set_title(f"{winner['name']}  with  Vd sigma = {vd_sigma}     "
              f"Yield = {yield_pct:.1f}%   "
              f"{verdict(yield_pct >= MC_YIELD_TARGET*100)}")
 ax.legend(loc="best", fontsize=9)
-plt.tight_layout(); plt.show()
+plt.tight_layout()
+plt.show()
 """))
 
 cells.append(md(
-"""**Decision rule.** If the 95th percentile of secondary spectrum stays
-under the spec, the supplier's $V_d$ tolerance is acceptable. If it
-doesn't, you either tighten the incoming-glass spec (charge a premium),
-or redesign with a less-dispersion-sensitive glass pair, or accept a
-looser downstream optical spec.
+"""**Decision rule.**
+
+- If the **nominal** design is already above the spec, tolerance
+  tightening cannot recover yield — the design itself has to change
+  (different glass pair, extra element, or a relaxed optical spec).
+- If the nominal is in spec but the **95th percentile** crosses the
+  limit, tightening the supplier's $V_d$ spec (or redesigning for less
+  $V_d$ sensitivity) is the appropriate response.
+- If the 95th percentile stays under the spec, the current supplier
+  $V_d$ tolerance is acceptable.
 
 The chain from *glass parameter tolerance* → *actual secondary spectrum*
 → *manufacturing yield* is closed end-to-end, which is the whole point
@@ -1220,58 +1597,125 @@ of combining the 3-parameter Buchdahl model with a real raytrace.
 """))
 
 cells.append(md(
-"""## Scorecard — four validity claims
+"""## Scorecard — five validity claims
 
 A single table summarizing whether the Buchdahl model has earned the
 right to be trusted for downstream design work.
 """))
 
 cells.append(code(
-"""claim_a_ok = err_max <= INDEX_ACCURACY_SPEC
-claim_b_ok = corr < -0.4   # expect strong negative: more anomalous dPgF -> smaller S
-claim_c_ok = len(fk_like) >= 6   # top-10 ranking dominated by FK family
-claim_d_ok = (sec_opt_um + 1.0) < sec_cdgm_um   # model's ideal beats best real glass
-# Claim E: 2D heatmap all cells converged + no pathological jumps
-claim_e_ok = (frac_converged == 100.0) and np.isfinite(grad_max) and finite_mask.all()
+"""def tri_verdict(status):
+    return {"pass": "[PASS]", "warn": "[WARN]", "fail": "[FAIL]"}[status]
+
+
+# --- Claim A: Buchdahl n(lambda) accuracy on a well-behaved glass ---
+if err_max <= INDEX_ACCURACY_SPEC:
+    claim_a_status = "pass"
+    claim_a_note = "N-BK7 only; anomalous-dispersion glasses not spot-checked here"
+elif err_max <= 2 * INDEX_ACCURACY_SPEC:
+    claim_a_status = "warn"
+    claim_a_note = "within 2x budget; revisit on anomalous-dispersion glasses"
+else:
+    claim_a_status = "fail"
+    claim_a_note = "exceeds budget"
+
+# --- Claim B: dPgF correlates with S across the catalog ---
+if corr <= -0.7:
+    claim_b_status = "pass"
+    claim_b_note = "strong negative correlation as expected from Conrady physics"
+elif corr <= -0.4:
+    claim_b_status = "warn"
+    claim_b_note = "moderate correlation; PgF + Vd jointly give a cleaner story"
+else:
+    claim_b_status = "fail"
+    claim_b_note = "dPgF alone does not track S"
+
+# --- Claim C: ranking reproduces FK-family consensus, and survives Sellmeier ---
+fk_frac_ok = len(fk_like) >= 6
+_abs_tag = (f" (S optimistic by median {median_s_residual_um:.1f} um vs full Sellmeier)"
+            if np.isfinite(median_s_residual_um) else "")
+if fk_frac_ok and np.isfinite(spearman) and top3_preserved and spearman >= 0.8:
+    claim_c_status = "pass"
+    claim_c_note = (f"ranking preserved: {len(fk_like)}/10 FK, Spearman "
+                    f"{spearman:+.2f} vs full Sellmeier{_abs_tag}")
+elif fk_frac_ok:
+    claim_c_status = "warn"
+    claim_c_note = (f"{len(fk_like)}/10 FK but full-Sellmeier rank corr = "
+                    f"{spearman if np.isfinite(spearman) else float('nan'):+.2f}"
+                    f"{_abs_tag}")
+else:
+    claim_c_status = "fail"
+    claim_c_note = f"only {len(fk_like)}/10 top crowns are FK-family"
+
+# --- Claim D: continuous target interpretation depends on training-hull check ---
+if optimum_inside_hull and (sec_opt_um + 1.0) < sec_cdgm_um:
+    claim_d_status = "pass"
+    claim_d_note = (f"target inside hull; beats best CDGM by "
+                    f"{sec_cdgm_um - sec_opt_um:.1f} um")
+else:
+    # Deliberate: outside-hull = WARN, not PASS. The continuous optimum
+    # is virtual guidance in model space, not proof of a missing glass.
+    claim_d_status = "warn"
+    claim_d_note = ("virtual target outside hull; interpret as model-space "
+                    "guidance, not a missing real glass")
+
+# --- Claim E: local smoothness as a surrogate prerequisite ---
+grid_ok = (frac_converged == 100.0) and np.isfinite(grad_max) and finite_mask.all()
+if grid_ok:
+    claim_e_status = "warn"   # intentional: smooth surrogate, NOT full mfr tolerance
+    claim_e_note = ("smooth surrogate for sensitivity; pending real melt-data "
+                    "covariance validation before full mfr tolerance use")
+else:
+    claim_e_status = "fail"
+    claim_e_note = "grid not fully converged or gradient non-finite"
 
 claims = [
-    ("A", "Buchdahl n(lambda) accuracy adequate",
+    ("A", "n(lambda) accuracy on a standard glass",
      f"max|err| = {err_max:.1e}  (<= {INDEX_ACCURACY_SPEC:.0e})",
-     claim_a_ok),
-    ("B", "dPgF drives secondary spectrum (physics)",
+     claim_a_status, claim_a_note),
+    ("B", "Partial-dispersion coordinates track S",
      f"corr(dPgF, S) = {corr:+.2f}  across {len(cdgm_scored)} glasses",
-     claim_b_ok),
-    ("C", "Ranking matches design-practice consensus",
-     f"{len(fk_like)}/10 top crowns are FK-family (fluor-crown)",
-     claim_c_ok),
-    ("D", "Model reveals catalog gap vs. achievable ideal",
-     f"model {sec_opt_um:.1f} um << best-real {sec_cdgm_um:.1f} um  "
-     f"(gap = {gap_sec:.1f} um)",
-     claim_d_ok),
-    ("E", "(nd, Vd) tolerancing support (local smoothness)",
+     claim_b_status, claim_b_note),
+    ("C", "FK family ranking survives Sellmeier cross-check",
+     f"{len(fk_like)}/10 FK; Spearman = "
+     f"{spearman if np.isfinite(spearman) else float('nan'):+.2f}",
+     claim_c_status, claim_c_note),
+    ("D", "Continuous target vs. catalog",
+     f"model {sec_opt_um:.1f} um vs best-real {sec_cdgm_um:.1f} um; "
+     f"inside hull: {optimum_inside_hull}",
+     claim_d_status, claim_d_note),
+    ("E", "Local smoothness surrogate",
      f"{GRID}x{GRID} grid: {frac_converged:.0f}% converged, finite gradient",
-     claim_e_ok),
+     claim_e_status, claim_e_note),
 ]
 
-print("=" * 82)
+print("=" * 92)
 print(" BUCHDAHL MODEL VALIDATION SCORECARD")
-print("=" * 82)
-print(f" {'':<3}{'Claim':<40}{'Result':<28}{'Verdict':>8}")
-print(" " + "-" * 80)
-for key, label, detail, ok in claims:
-    print(f" {key:<3}{label:<40}{detail:<28}{verdict(ok):>8}")
-print(" " + "-" * 80)
-n_pass = sum(ok for *_, ok in claims)
-n_total = len(claims)
-if n_pass == n_total:
-    print(f" Result: {n_pass}/{n_total} claims pass  -> Buchdahl 3-parameter model "
-          f"is validated for use in\\n         apo-doublet design space exploration "
-          f"AND (nd, Vd) tolerance analysis.")
+print("=" * 92)
+print(f" {'':<3}{'Claim':<42}{'Result':<32}{'Verdict':>8}")
+print(" " + "-" * 90)
+for key, label, detail, status, note in claims:
+    print(f" {key:<3}{label:<42}{detail:<32}{tri_verdict(status):>8}")
+print(" " + "-" * 90)
+print(" Status notes:")
+for key, _, _, status, note in claims:
+    print(f"   {key} {tri_verdict(status)}  {note}")
+print(" " + "-" * 90)
+n_pass = sum(1 for *_, s, _ in claims if s == "pass")
+n_warn = sum(1 for *_, s, _ in claims if s == "warn")
+n_fail = sum(1 for *_, s, _ in claims if s == "fail")
+print(f" Result: {n_pass} PASS, {n_warn} WARN, {n_fail} FAIL.")
+if n_fail == 0:
+    print("   The Buchdahl 3-parameter model provides useful glass substitution")
+    print("   ranking (Claims A-C). The continuous optimum is DESIGN GUIDANCE in")
+    print("   model space (Claim D, WARN by default when outside the training")
+    print("   hull), and the local smoothness (Claim E) is sufficient for")
+    print("   sensitivity studies but not a standalone manufacturing tolerance")
+    print("   model.")
 else:
-    failed = [c[0] for c in claims if not c[-1]]
-    print(f" Result: {n_pass}/{n_total} claims pass  -> Claims "
-          f"{', '.join(failed)} failed; model not yet validated.")
-print("=" * 82)
+    failed = [c[0] for c in claims if c[3] == "fail"]
+    print(f"   FAIL on Claims {', '.join(failed)} — model not yet validated.")
+print("=" * 92)
 """))
 
 cells.append(md(
@@ -1279,16 +1723,16 @@ cells.append(md(
 
 The 3-parameter Buchdahl model from `model_glass_buchdahl.ipynb` was
 exercised against a concrete apochromatic-doublet design task, not as a
-curve-fitting benchmark but as a **decision-support tool**. Four
-independent pieces of evidence were assembled:
+curve-fitting benchmark but as a **decision-support tool**. Five pieces
+of evidence were assembled:
 
 | Claim | What it establishes | Evidence source |
 |---|---|---|
 | A | Predicted $n(\\lambda)$ stays within an error budget that does not dominate typical manufacturing tolerances | Full-band comparison against a Sellmeier truth for N-BK7 |
-| B | The 3rd model axis $\\Delta P_{g,F}$ is a **physical** driver of secondary spectrum, not a statistical artefact | Scatter + correlation over all 259 CDGM crowns |
-| C | Model-driven rankings reproduce a well-known optical-design consensus (apo requires fluor-crown family) | Top-10 ranking of CDGM crowns for the designed achromat |
-| D | The continuous model reveals **catalog gaps** that discrete glass selection cannot see | Model optimum beats any real CDGM glass by a measurable margin |
-| E | The model is **locally smooth in $(n_d, V_d)$**, which is the prerequisite for any tolerancing analysis | 2-D heatmap + 1-D slices around the winner glass |
+| B | The 3rd model axis $\\Delta P_{g,F}$ tracks the secondary-spectrum ordering across the catalog, in the direction Conrady physics predicts | Scatter + correlation across all feasible CDGM crown candidates |
+| C | Model-driven rankings reproduce the well-known optical-design consensus (apo doublet crowns are the FK/fluor-crown family), and **survive re-evaluation with real Sellmeier $n(\\lambda)$** | Top-10 CDGM ranking plus a Buchdahl-vs-Sellmeier cross-check |
+| D | The continuous model produces a *design target* in parameter space; whether that target is physical or extrapolative is decided by an explicit 3-D training-hull check, not assumed | Comparison to best real CDGM glass + convex-hull membership |
+| E | The model is **locally smooth in $(n_d, V_d)$** — a prerequisite for any sensitivity study on top of it, though not by itself a manufacturing tolerance model | 2-D heatmap + 1-D slices around the winner glass |
 
 **Practical implication.** A lens designer who uses the Buchdahl model
 to explore glass space gains:
@@ -1297,22 +1741,26 @@ to explore glass space gains:
   optimization legal at the glass-parameter level.
 - A **principled ranking** of real glasses for any differentiable optical
   metric — no manual catalog browsing.
-- A **diagnostic** for when no real glass meets a spec (Claim D gap
-  metric).
-- A **yield-prediction** pipeline from glass tolerance to measurable
-  optical performance (the Monte Carlo section).
+- **Design guidance** when no real glass meets a spec: Claim D reports
+  the gap between the model-space target and the catalog *together with*
+  a hull check, so the designer knows whether that gap is actionable.
+- A **local sensitivity surrogate** (from the 2-D heatmap and 1-D slices)
+  that can feed into a full manufacturing tolerance model once real
+  melt-data covariance is added.
 
 None of these require the model to be *perfect*; they require it to be
 *approximately right in the directions that matter for design decisions*.
-The four validated claims above are the evidence that this is the case.
+The scorecard records a mix of PASS and WARN verdicts to reflect that:
+the model is a useful decision-support tool, not a universally validated
+physics engine.
 
-**What was NOT validated here.** The model's behavior near the training-
-domain boundary (where the optimizer hits bounds), accuracy on
-anomalous-partial-dispersion glasses specifically (the regression was
-catalog-weighted, so FK-family glasses are under-represented in
-training), and performance on multi-element systems where $\\Delta
-P_{g,F}$ couples non-trivially through more surfaces. Those are natural
-follow-on investigations.
+**What was NOT validated here.** Accuracy on anomalous-partial-dispersion
+glasses specifically (FK-family under-representation in training),
+behaviour of the continuous optimum when it leaves the 3-D training
+hull, covariance structure of real melt-to-melt variation (needed to
+turn Claim E into a full manufacturing yield model), and performance on
+multi-element systems where $\\Delta P_{g,F}$ couples non-trivially
+through more surfaces. Those are natural follow-on investigations.
 """))
 
 

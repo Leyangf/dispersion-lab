@@ -13,4 +13,7 @@ dependencies = [
     "ipykernel",
     "nbformat",
     "optiland",
+    "torch",
+    "scikit-learn",
+    "pandas",
 ]
