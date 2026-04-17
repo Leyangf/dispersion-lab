@@ -1,16 +1,17 @@
-"""Build glass_substitution_workflow.ipynb from scratch.
+"""Build notebooks/02_glass_substitution_workflow.ipynb from scratch.
 
-Run once: `python _build_workflow_nb.py`. Produces a runnable notebook that
-demonstrates the practical application of the 3-parameter Buchdahl model:
-baseline doublet -> model glass optimization -> CDGM catalog match ->
-Monte Carlo tolerance.
+Run once: `uv run python scripts/build_02_workflow.py`. Produces a
+runnable notebook that demonstrates the practical application of the
+3-parameter Buchdahl model: baseline doublet -> model glass
+optimization -> CDGM catalog match -> Monte Carlo tolerance.
 """
 
 import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
-OUT = HERE / "glass_substitution_workflow.ipynb"
+PROJECT_ROOT = HERE.parent
+OUT = PROJECT_ROOT / "notebooks" / "02_glass_substitution_workflow.ipynb"
 
 
 def md(source: str) -> dict:
@@ -156,7 +157,7 @@ def feature_vec(nd, vd, dPgF):
     return np.concatenate([square, cube])
 
 
-A_REG = np.load("regression_buchdahl_nu34_20dim_opt.npy")  # matches ALPHA=1.818
+A_REG = np.load("../data/regression_buchdahl_nu34_20dim_opt.npy")  # matches ALPHA=1.818
 print(f"Loaded A_reg: shape = {A_REG.shape}  (alpha = {ALPHA})")
 
 

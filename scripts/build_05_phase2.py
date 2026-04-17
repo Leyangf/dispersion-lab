@@ -30,7 +30,8 @@ import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
-OUT = HERE / "neural_buchdahl_phase2.ipynb"
+PROJECT_ROOT = HERE.parent
+OUT = PROJECT_ROOT / "notebooks" / "05_neural_buchdahl_phase2.ipynb"
 
 
 def md(source):

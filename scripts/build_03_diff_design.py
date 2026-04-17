@@ -17,7 +17,8 @@ import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
-OUT = HERE / "differentiable_design.ipynb"
+PROJECT_ROOT = HERE.parent
+OUT = PROJECT_ROOT / "notebooks" / "03_differentiable_design.ipynb"
 
 
 def md(source):
@@ -132,7 +133,7 @@ OMEGA_C = buchdahl_omega(LAMBDA_C)
 
 # Load the pre-trained nu3, nu4 regression matrix (20x2) — same file the
 # workflow notebook uses.
-A_REG_np = np.load("regression_buchdahl_nu34_20dim_opt.npy")
+A_REG_np = np.load("../data/regression_buchdahl_nu34_20dim_opt.npy")
 A_REG = torch.tensor(A_REG_np, dtype=torch.float64)
 print(f"Loaded A_reg: shape = {tuple(A_REG.shape)}  (alpha = {ALPHA})")
 """))
