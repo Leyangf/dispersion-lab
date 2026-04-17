@@ -400,6 +400,68 @@ def design_achromat(crown_material, flint_material,
     return lens, (r1, r3)
 
 
+# -----------------------------------------------------------------
+#  Fast numpy paraxial path — bypasses Optiland's per-call overhead
+#  inside the fsolve loop. Same math, just without building an Optic
+#  every iteration. Used for the 259-CDGM sweep, the 441-cell
+#  heatmap, and the 200-sample Monte Carlo.
+#
+#  Optiland is still used for the baseline/optimum/winner final
+#  lenses (visualization, verification, chromatic focal shift plot).
+# -----------------------------------------------------------------
+def paraxial_trace(r1, r2, r3, t1, t2, n_crown, n_flint):
+    \"\"\"Paraxial trace of a cemented doublet from a collimated axial bundle.
+
+    Inputs are scalars. Indices may be scalar or array (broadcastable).
+    Returns (EFL, BFL).
+    \"\"\"
+    y, u = 1.0, 0.0
+    u = (u - (n_crown - 1.0) * y / r1) / n_crown                   # surf 1
+    y = y + u * t1
+    u = (n_crown * u - (n_flint - n_crown) * y / r2) / n_flint     # surf 2
+    y = y + u * t2
+    u = n_flint * u - (1.0 - n_flint) * y / r3                     # surf 3
+    return -1.0 / u, -y / u
+
+
+def design_achromat_fast(nd_c, vd_c, dPgF_c, nd_f, vd_f, dPgF_f,
+                         target_efl=TARGET_EFL, r2=-7.94140,
+                         t1=0.434, t2=0.321,
+                         r1_init=12.38401, r3_init=-48.44396):
+    \"\"\"Solve (r1, r3) via pure-numpy paraxial trace. ~30x faster than
+    the Optiland-based `design_achromat`. Returns (r1, r3).\"\"\"
+    from scipy.optimize import fsolve
+
+    lams = np.array([LAMBDA_F, LAMBDA_D, LAMBDA_C])
+    n_c = predict_index_buchdahl(nd_c, vd_c, dPgF_c, lams)
+    n_f = predict_index_buchdahl(nd_f, vd_f, dPgF_f, lams)
+
+    def residuals(radii):
+        r1, r3 = radii
+        efl_d, _ = paraxial_trace(r1, r2, r3, t1, t2, n_c[1], n_f[1])
+        _, bfl_F = paraxial_trace(r1, r2, r3, t1, t2, n_c[0], n_f[0])
+        _, bfl_C = paraxial_trace(r1, r2, r3, t1, t2, n_c[2], n_f[2])
+        return [efl_d - target_efl, bfl_F - bfl_C]
+
+    sol, info, ier, msg = fsolve(residuals, x0=[r1_init, r3_init],
+                                 full_output=True, xtol=1e-10)
+    if ier != 1:
+        raise RuntimeError(f"fast achromat design failed: {msg}")
+    return float(sol[0]), float(sol[1])
+
+
+def secondary_spectrum_fast(r1, r3, nd_c, vd_c, dPgF_c,
+                            nd_f, vd_f, dPgF_f,
+                            r2=-7.94140, t1=0.434, t2=0.321):
+    \"\"\"|BFL(g) - BFL(d)| in mm, using the fast paraxial path.\"\"\"
+    lams = np.array([LAMBDA_g, LAMBDA_D])
+    n_c = predict_index_buchdahl(nd_c, vd_c, dPgF_c, lams)
+    n_f = predict_index_buchdahl(nd_f, vd_f, dPgF_f, lams)
+    _, bfl_g = paraxial_trace(r1, r2, r3, t1, t2, n_c[0], n_f[0])
+    _, bfl_d = paraxial_trace(r1, r2, r3, t1, t2, n_c[1], n_f[1])
+    return abs(bfl_g - bfl_d)
+
+
 # Wavelength sweep used by the chromatic focal shift plot downstream.
 LAM_SCAN = np.linspace(0.400, 0.700, 41)
 
@@ -443,6 +505,26 @@ print(f"Baseline benchmark  S_0 = {sec0_um:.2f} um  "
       f"(Conrady estimate ~9 um; N-LAK14/N-SF2 have matched dPgF so")
 print(f"                   they sit near the 'ordinary achromat' point — "
       f"useful as a reference)")
+
+# --- Verification: fast numpy path matches Optiland ---
+r1_fast, r3_fast = design_achromat_fast(
+    NLAK14['nd'], NLAK14['vd'], NLAK14['dPgF'],
+    NSF2['nd'],   NSF2['vd'],   NSF2['dPgF'],
+)
+sec_fast_um = secondary_spectrum_fast(
+    r1_fast, r3_fast,
+    NLAK14['nd'], NLAK14['vd'], NLAK14['dPgF'],
+    NSF2['nd'],   NSF2['vd'],   NSF2['dPgF'],
+) * 1e3
+
+print(f"\\nFast numpy path vs. Optiland (used in the 18,000+ inner-loop calls):")
+print(f"  r1:  optiland={r1_base:+.6f}  fast={r1_fast:+.6f}  "
+      f"diff={r1_fast - r1_base:+.2e}")
+print(f"  r3:  optiland={r3_base:+.6f}  fast={r3_fast:+.6f}  "
+      f"diff={r3_fast - r3_base:+.2e}")
+print(f"  S :  optiland={sec0_um:7.4f}  fast={sec_fast_um:7.4f}  "
+      f"diff={sec_fast_um - sec0_um:+.2e}")
+print(f"  (Tolerance: diffs should be < 1e-4 mm or 1e-3 um)")
 """))
 
 cells.append(md(
@@ -490,19 +572,16 @@ GLASS_BOUNDS = [
 ]
 
 
-def design_with_crown(nd, vd, dPgF):
-    crown = BuchdahlModelGlass(nd, vd, dPgF, label="search")
-    flint = BuchdahlModelGlass(**NSF2, label="N-SF2 (model)")
-    return design_achromat(crown, flint, target_efl=TARGET_EFL)
-
-
 def objective(x):
     nd, vd, dPgF = x
     try:
-        lens, _ = design_with_crown(nd, vd, dPgF)
+        r1, r3 = design_achromat_fast(nd, vd, dPgF,
+                                       NSF2['nd'], NSF2['vd'], NSF2['dPgF'])
     except Exception:
         return 1e6
-    return secondary_spectrum(lens)**2
+    S = secondary_spectrum_fast(r1, r3, nd, vd, dPgF,
+                                NSF2['nd'], NSF2['vd'], NSF2['dPgF'])
+    return S ** 2
 
 
 x0 = np.array([NLAK14["nd"], NLAK14["vd"], NLAK14["dPgF"]])
@@ -519,7 +598,12 @@ for name, val, (lo, hi) in zip(["nd","Vd","dPgF"], res.x, GLASS_BOUNDS):
     if abs(val - lo) < 1e-3 * max(1, abs(lo)) or abs(val - hi) < 1e-3 * max(1, abs(hi)):
         at_boundary.append(name)
 
-lens_opt, (r1_opt, r3_opt) = design_with_crown(nd_opt, vd_opt, dPgF_opt)
+# Final build with Optiland (for visualization / verification only)
+r1_opt, r3_opt = design_achromat_fast(nd_opt, vd_opt, dPgF_opt,
+                                       NSF2['nd'], NSF2['vd'], NSF2['dPgF'])
+crown_opt = BuchdahlModelGlass(nd_opt, vd_opt, dPgF_opt, label="ideal model")
+flint_opt = BuchdahlModelGlass(**NSF2, label="N-SF2 (model)")
+lens_opt = build_doublet(crown_opt, flint_opt, r1=r1_opt, r3=r3_opt)
 ax_opt, _ = axial_color(lens_opt)
 sec_opt = secondary_spectrum(lens_opt)
 
@@ -634,22 +718,29 @@ print(f"Loaded {len(cdgm)} CDGM glasses")
 """))
 
 cells.append(code(
-"""# Evaluate every CDGM glass by redesigning the achromat
+"""# Evaluate every CDGM glass via the fast numpy paraxial path
+# (no Optiland objects built in the loop).
+import time as _time
+_t0 = _time.time()
 cdgm_scored = []
-flint_ref = BuchdahlModelGlass(**NSF2, label="N-SF2 (model)")
-
 for g in cdgm:
     try:
-        crown_try = BuchdahlModelGlass(g["nd"], g["vd"], g["dPgF"])
-        lens_try, (r1_try, r3_try) = design_achromat(
-            crown_try, flint_ref, target_efl=TARGET_EFL)
-        sec_try = secondary_spectrum(lens_try)
+        r1_try, r3_try = design_achromat_fast(
+            g["nd"], g["vd"], g["dPgF"],
+            NSF2['nd'], NSF2['vd'], NSF2['dPgF'],
+        )
+        sec_try_um = secondary_spectrum_fast(
+            r1_try, r3_try,
+            g["nd"], g["vd"], g["dPgF"],
+            NSF2['nd'], NSF2['vd'], NSF2['dPgF'],
+        ) * 1e3
         cdgm_scored.append(dict(g, r1=r1_try, r3=r3_try,
-                                sec_spec_um=sec_try * 1e3))
+                                sec_spec_um=sec_try_um))
     except Exception:
         # skip glasses where the achromat solver cannot converge
         # (nd or Vd too close to flint makes the 2x2 system singular)
         pass
+print(f"CDGM sweep: {len(cdgm_scored)} glasses scored in {_time.time()-_t0:.1f} s")
 
 cdgm_scored.sort(key=lambda g: g["sec_spec_um"])
 print(f"Ranked {len(cdgm_scored)} CDGM crown candidates by secondary spectrum:")
@@ -746,11 +837,13 @@ else:
 
 cells.append(code(
 """# Build the winner's designed achromat for downstream comparison
+# (Optiland object — only used for visualization here; radii are from the
+#  fast solver stored in cdgm_scored).
 crown_cdgm = BuchdahlModelGlass(winner["nd"], winner["vd"], winner["dPgF"],
                                 label=f"CDGM {winner['name']}")
 flint_cdgm = BuchdahlModelGlass(**NSF2, label="N-SF2 (model)")
-lens_cdgm, (r1_cdgm, r3_cdgm) = design_achromat(crown_cdgm, flint_cdgm,
-                                                target_efl=TARGET_EFL)
+r1_cdgm, r3_cdgm = winner["r1"], winner["r3"]
+lens_cdgm = build_doublet(crown_cdgm, flint_cdgm, r1=r1_cdgm, r3=r3_cdgm)
 ax_cdgm, _  = axial_color(lens_cdgm)
 sec_cdgm     = secondary_spectrum(lens_cdgm)
 sec_opt_um   = sec_opt  * 1e3
@@ -930,20 +1023,27 @@ dv_grid = np.linspace(-1.5,   1.5,   GRID)
 
 S_grid = np.full((GRID, GRID), np.nan)
 n_converged = 0
+_t0 = _time.time()
 for i, dn in enumerate(dn_grid):
     for j, dv in enumerate(dv_grid):
         try:
-            crown = BuchdahlModelGlass(
+            r1, r3 = design_achromat_fast(
                 winner['nd']   + dn,
                 winner['vd']   + dv,
                 winner['dPgF'],
+                NSF2['nd'], NSF2['vd'], NSF2['dPgF'],
             )
-            flint = BuchdahlModelGlass(**NSF2)
-            lens, _ = design_achromat(crown, flint, target_efl=TARGET_EFL)
-            S_grid[i, j] = secondary_spectrum(lens) * 1e3
+            S_grid[i, j] = secondary_spectrum_fast(
+                r1, r3,
+                winner['nd']   + dn,
+                winner['vd']   + dv,
+                winner['dPgF'],
+                NSF2['nd'], NSF2['vd'], NSF2['dPgF'],
+            ) * 1e3
             n_converged += 1
         except Exception:
             pass
+print(f"2D heatmap: {GRID*GRID} points in {_time.time()-_t0:.1f} s")
 
 # Smoothness metrics
 finite_mask = np.isfinite(S_grid)
@@ -1039,15 +1139,22 @@ vd_sigma = 0.3
 samples = np.random.normal(loc=winner["vd"], scale=vd_sigma, size=N_MC)
 sec_mc_um = np.empty(N_MC)
 ok_mc     = np.zeros(N_MC, dtype=bool)
+_t0 = _time.time()
 for i, vd_draw in enumerate(samples):
     try:
-        crown = BuchdahlModelGlass(winner["nd"], vd_draw, winner["dPgF"])
-        flint = BuchdahlModelGlass(**NSF2)
-        lens_mc, _ = design_achromat(crown, flint, target_efl=TARGET_EFL)
-        sec_mc_um[i] = secondary_spectrum(lens_mc) * 1e3
+        r1, r3 = design_achromat_fast(
+            winner["nd"], vd_draw, winner["dPgF"],
+            NSF2['nd'], NSF2['vd'], NSF2['dPgF'],
+        )
+        sec_mc_um[i] = secondary_spectrum_fast(
+            r1, r3,
+            winner["nd"], vd_draw, winner["dPgF"],
+            NSF2['nd'], NSF2['vd'], NSF2['dPgF'],
+        ) * 1e3
         ok_mc[i] = True
     except Exception:
         sec_mc_um[i] = np.nan
+print(f"Monte Carlo: {N_MC} samples in {_time.time()-_t0:.1f} s")
 
 finite = ok_mc
 p05, p50, p95 = np.percentile(sec_mc_um[finite], [5, 50, 95])
