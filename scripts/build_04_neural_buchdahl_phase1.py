@@ -1100,9 +1100,12 @@ Buchdahl family under the Level-1 spectral-fit target** — it is not a
 downstream-$S$-optimal oracle, but it is a tight upper bound on what
 any Level-2 predictor can deliver under this parameterization. Since
 C already matches it, the remaining ~1.5 μm is *consistent with* the
-4-term anchor-preserving Buchdahl floor at this target. A Phase 3
-higher-order extension is the natural direction for attacking that
-floor.
+4-term anchor-preserving Buchdahl floor at this target. Attacking that
+floor is the job of Phase 2 (bounded neural residual outside the
+polynomial basis); a higher-order Buchdahl extension would attack the
+same floor from within the basis but is subject to the overfitting
+ceiling established by Notebook 01 Test A — see the Future-work
+section below.
 
 ### Honest summary after Part 1
 
@@ -1117,17 +1120,23 @@ floor.
 > saturates the cross-glass map at this dataset size. The residual
 > ~1.5 μm is consistent with the Oracle upper bound (the 4-term
 > anchor-preserving Buchdahl floor at this Level-1 target) rather than
-> with predictor error — which makes higher-order Buchdahl a natural
-> direction for Phase 3, not a bigger predictor.
+> with predictor error — attacking this floor motivates Phase 2's
+> bounded residual architecture, which stays at order 4.
 
 ### Future work
 
 - **Phase 2** — bounded envelope residual correction
   $n = n_\\text{Buchdahl} + \\varepsilon_\\text{scale}\\,q(\\lambda)\\,\\tanh(\\text{NN})$
-  with $q$ vanishing at $d/F/C/g$.
-- **Phase 3** — higher-order Buchdahl ($K \\in \\{5,6\\}$), anchor-preserving
-  solve for $\\nu_1, \\nu_2$ conditioned on all $\\nu_{k \\ge 3}$ predicted
-  by NN. Attacks the Oracle-level floor directly.
+  with $q$ vanishing at $d/F/C/g$. Stays at polynomial order 4, so it
+  inherits Notebook 01 Test A's validation and does not re-open the
+  higher-order overfitting regime.
+- **Higher-order Buchdahl** ($K\\in\\{5,6\\}$) is **not** a natural
+  default. Notebook 01 Test A shows order-5+ unconstrained fits
+  overfit badly on the current 17-wavelength grid (holdout ratio
+  rises to $\\sim 3.8\\times$ at $K=5$). Any higher-order Phase 3
+  scheme would first need a denser wavelength grid, regularisation,
+  or structural priors on $\\nu_{k\\ge 3}$ — it is a constrained
+  experiment, not a drop-in extension.
 - **Backport** the anchor-preserving fit to the other three notebooks
   and recheck their measured secondary-spectrum numbers; Claim G here
   suggests the bias on this test bench is $\\mathcal{O}(10\\,\\mu m)$,

@@ -1106,35 +1106,74 @@ be verified numerically in the scorecard:
 > doesn't exist; it might appear at larger $\\varepsilon_\\text{scale}$ or
 > with a different NN architecture.
 
-### Connection to Phase 3
+### Future directions
 
-Phase 3 (higher-order Buchdahl, $K=5, 6$) is an alternative way to
-attack the off-anchor spectral shape. If Phase 3 remains
-anchor-preserving — i.e., $\\nu_1, \\nu_2$ are re-solved against the
-full $K$-term expansion — then by the same logic as Phase 2, **it
-also cannot change any anchor-only quantity, including Claim G**.
-The individual higher-order $\\nu_k$ terms do contribute at the anchor
-lines, but the re-solved $\\nu_1, \\nu_2$ exactly cancel those
-contributions, leaving $n(\\lambda_{d,F,C,g})$ pinned to the input
-$(n_d, V_d, \\Delta P_{g,F})$.
+#### Primary route — stay inside the 3-parameter model
 
-The difference between Phase 2 and Phase 3 is therefore one of
-**parameterization**, not of what they can change:
+The default continuation should keep the input fixed at
+$(n_d, V_d, \\Delta P_{g,F})$ and improve the residual model around that
+constraint. This preserves the central claim of the thesis: a compact
+three-parameter physical glass coordinate can support broadband
+dispersion prediction, differentiable design, and downstream glass
+selection.
 
-- Phase 2 represents the correction as an **external residual NN**
-  outside the Buchdahl polynomial basis.
-- Phase 3 represents the correction as **additional Buchdahl
-  coefficients** $\\nu_k$ for $k \\geq 3$, staying within the
-  polynomial-in-$\\omega$ basis.
+Possible 3-parameter-preserving directions include:
 
-Both leave anchor-line physics untouched. Phase 2's residual has
-essentially unbounded expressivity (subject to $\\varepsilon_\\text{scale}$
-and the $q$ envelope); Phase 3 is constrained to the specific
-functional form $\\sum_k \\nu_k \\omega^k$, which may generalize better
-or be more interpretable but is strictly smaller as a function class
-for a given $K$. Which one extracts more from the 3-parameter input
-is an empirical question — and, per the bottleneck discussion above,
-both may be limited by the same 3-parameter input information.
+- alternative feature maps for the $(n_d, V_d, \\Delta P_{g,F}) \\to
+  (\\nu_3,\\nu_4)$ predictor, replacing the current hand-written 20-D
+  polynomial with a better-conditioned basis;
+- cross-catalog augmentation and equivalent-glass grouping, so that
+  near-duplicate glasses from different manufacturers constrain the
+  same local region of parameter space rather than behaving as
+  independent sparse samples;
+- residual-model regularisation or architecture changes inside Phase 2,
+  while keeping the anchor-zero envelope and the same three physical
+  inputs.
+
+These directions keep the input contract unchanged and therefore do not
+weaken the model-glass premise.
+
+#### Conditional route — add a fourth physical descriptor only if needed
+
+A fourth descriptor, such as an additional independent partial-dispersion
+coordinate, may be useful if a downstream task requires off-anchor
+broadband accuracy beyond what the three-parameter Phase 2 model can
+deliver. This is a legitimate accuracy-for-complexity tradeoff, not a
+free improvement.
+
+The cost is conceptual and practical:
+
+- the model is no longer a pure $(n_d, V_d, \\Delta P_{g,F})$ glass
+  representation;
+- catalog coverage becomes more demanding, because the fourth descriptor
+  must be computed or available consistently for every glass;
+- downstream optimisation now explores a larger material space whose
+  physical hull and extrapolation behaviour must be revalidated.
+
+For that reason, a four-parameter extension should be treated as
+conditional: appropriate when the application needs sub-$10^{-3}$
+off-anchor error, but not the default continuation of the three-parameter
+story.
+
+#### Higher-order Buchdahl remains a constrained experiment
+
+Extending the Buchdahl basis to $K=5,6$ is attractive only in principle.
+Notebook 01 Test A already showed that, under the current 17-wavelength
+training grid, unconstrained higher-order Buchdahl terms overfit:
+order 5 shows a clear holdout penalty and higher orders diverge badly.
+
+A higher-order Phase 3 would therefore require new infrastructure:
+denser wavelength sampling, explicit regularisation, and a fresh
+wavelength-holdout analysis. Without that, increasing $K$ is a
+training-error illusion rather than trustworthy capacity.
+
+#### Sellmeier-aware residual is a different model class
+
+A residual model that consumes Sellmeier coefficients could be useful as
+a catalog surrogate, but it no longer answers the same question. It
+assumes access to the full Sellmeier representation and therefore gives
+up the compact model-glass contract. It should be framed as a separate
+baseline, not as the next step of the three-parameter Buchdahl pipeline.
 """))
 
 notebook = {
