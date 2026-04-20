@@ -111,38 +111,28 @@ np.random.seed(0)
 """))
 
 cells.append(code(
-"""# ---- Spectral-line constants and Buchdahl alpha (identical to the other
-#      two notebooks so the model is byte-identical).
+"""# ---- Shared Buchdahl primitives (anchor-preserving, dispersionlab) ----
+#
+# dispersionlab.feature_vec_20 and dispersionlab.solve_nu12_from_nu34 are
+# backend-agnostic — their arithmetic is scalar-level, so the same
+# functions drive the numpy path in NB02 and the torch autograd path
+# here without any duplicate implementations.
 
-LAMBDA_D = 0.5875618
-LAMBDA_g = 0.4358343
-LAMBDA_F = 0.4861327
-LAMBDA_C = 0.6562725
-ALPHA    = 1.818   # optimized alpha from model_glass_buchdahl.ipynb
+from dispersionlab import (
+    LAMBDA_D, LAMBDA_F, LAMBDA_C, LAMBDA_g,
+    ALPHA,
+    buchdahl_omega,
+    feature_vec_20,
+    solve_nu12_from_nu34,
+)
 
-
-def buchdahl_omega(lam, alpha=ALPHA):
-    dl = lam - LAMBDA_D
-    return dl / (1.0 + alpha * dl)
-
-
-OMEGA_g = buchdahl_omega(LAMBDA_g)
-OMEGA_F = buchdahl_omega(LAMBDA_F)
-OMEGA_C = buchdahl_omega(LAMBDA_C)
-
-
-# Load the pre-trained nu3, nu4 regression matrix (20x2) — same file the
-# workflow notebook uses.
-A_REG_np = np.load("../data/regression_buchdahl_nu34_20dim_opt.npy")
+A_REG_np = np.load("../data/regression_buchdahl_anchor_nu34_20dim_opt.npy")
 A_REG = torch.tensor(A_REG_np, dtype=torch.float64)
-print(f"Loaded A_reg: shape = {tuple(A_REG.shape)}  (alpha = {ALPHA})")
+print(f"Loaded anchor-preserving A_reg: shape = {tuple(A_REG.shape)}  (alpha = {ALPHA})")
 """))
 
 cells.append(code(
-"""# ---- Torch-friendly rewrite of the Buchdahl predictor ----
-#
-# Critical: nothing in this function converts to numpy. Every op goes
-# through torch, so autograd flows through nd, vd, dPgF.
+"""# ---- Torch-differentiable anchor-preserving Buchdahl predictor ----
 
 def _to_scalar_tensor(x):
     if isinstance(x, torch.Tensor):
@@ -150,39 +140,14 @@ def _to_scalar_tensor(x):
     return torch.tensor(float(x), dtype=torch.float64)
 
 
-def analytical_nu12_torch(nd, vd, dPgF):
-    dn_FC = (nd - 1.0) / vd
-    PgF   = 0.6438 - 0.001682 * vd + dPgF
-    dn_gF = PgF * dn_FC
-    # 2x2 system
-    M = torch.tensor([
-        [OMEGA_F - OMEGA_C,   OMEGA_F**2 - OMEGA_C**2],
-        [OMEGA_g - OMEGA_F,   OMEGA_g**2 - OMEGA_F**2],
-    ], dtype=torch.float64)
-    rhs = torch.stack([dn_FC, dn_gF])
-    return torch.linalg.solve(M, rhs)
-
-
-def feature_vec_torch(nd, vd, dPgF):
-    one = torch.ones((), dtype=torch.float64)
-    return torch.stack([
-        one, nd, vd, dPgF,
-        nd*nd, vd*vd, dPgF*dPgF,
-        nd*vd, nd*dPgF, vd*dPgF,
-        nd*nd*nd, vd*vd*vd, dPgF*dPgF*dPgF,
-        nd*nd*vd, nd*nd*dPgF,
-        vd*vd*nd, vd*vd*dPgF,
-        dPgF*dPgF*nd, dPgF*dPgF*vd,
-        nd*vd*dPgF,
-    ])
-
-
 def predict_index_torch(nd, vd, dPgF, lam):
-    \"\"\"n(lambda) via the 3-parameter Buchdahl model, autograd-friendly.
+    \"\"\"Anchor-preserving n(lambda) with autograd flowing through
+    (nd, vd, dPgF).
 
-    nd, vd, dPgF: scalar torch tensors (may have requires_grad=True).
-    lam: torch tensor (any shape).
-    Returns: n(lambda) tensor with the same shape as lam.
+    Shapes:
+      nd, vd, dPgF : scalar torch tensors (may have requires_grad=True)
+      lam          : torch tensor (any shape)
+      returns      : n(lambda) tensor with same shape as lam
     \"\"\"
     nd   = _to_scalar_tensor(nd)
     vd   = _to_scalar_tensor(vd)
@@ -192,17 +157,16 @@ def predict_index_torch(nd, vd, dPgF, lam):
     else:
         lam = lam.to(dtype=torch.float64)
 
-    nu12 = analytical_nu12_torch(nd, vd, dPgF)              # [2]
-    phi  = feature_vec_torch(nd, vd, dPgF)                  # [20]
-    nu34 = phi @ A_REG                                      # [2]
-    omega = (lam - LAMBDA_D) / (1.0 + ALPHA * (lam - LAMBDA_D))
+    phi      = feature_vec_20(nd, vd, dPgF)                       # [20]
+    nu3, nu4 = phi @ A_REG                                        # [2]
+    nu1, nu2 = solve_nu12_from_nu34(nd, vd, dPgF, nu3, nu4)
+    omega    = buchdahl_omega(lam)                                # any backend
 
-    n = nd * torch.ones_like(lam)
-    for k, nu_k in enumerate(
-        (nu12[0], nu12[1], nu34[0], nu34[1]), start=1
-    ):
-        n = n + nu_k * omega**k
-    return n
+    return (nd
+            + nu1 * omega
+            + nu2 * omega**2
+            + nu3 * omega**3
+            + nu4 * omega**4)
 """))
 
 cells.append(code(
