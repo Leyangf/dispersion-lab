@@ -106,7 +106,7 @@ $$\Phi_3(\omega) = \omega^3 - \omega B_{11} - \omega^2 B_{21}, \quad \Phi_4(\ome
 
 | Notebook | 理论角色 |
 |:---:|:---|
-| 01 | **锚点保留家族的定义与 principled α 选择**：Part 1 以一张表断定 legacy 构造的 V_d 滑移 ~1.14 单位 vs 锚点保留的 ~5·10⁻¹²（544 玻璃）；Part 2 定义任意 K 下的锚点保留 Buchdahl 家族；Part 3 在家族内做粗粒 (K × α) sweep（Test A 绝对 hold error）；Part 4 定量对比 K=3 / K=4 / K=8 三个代表点；Part 5 在 5 个 principled α 候选（data-driven fit-min、NB01 legacy、band-symmetric、fine-sweep Test A min、Test B min）之间比较，以 **band-symmetric `α = 1.9547`** 作为可推导的结构选择，并在 K=4, α=1.9547 验证 cross-glass 泛化。结论明确区分 **compact / production / frontier** 三个角色。Legacy 构造下的启发式分析保留在 `01_legacy_reference.ipynb` 作为历史参考。 |
+| 01 | **锚点保留家族的定义与 principled α 选择 + 误差分解**：Part 0 以 Abbe / ΔP-V_d / 3-D hull 建立 catalog 几何；Part 1 以一张表断定 legacy 构造的 V_d 滑移 ~1.14 单位 vs 锚点保留的 ~5·10⁻¹²（544 玻璃）；Part 2 定义任意 K 下的锚点保留 Buchdahl 家族；Part 3 选择聚合判据（max）；Part 4 在 max 下识别 K=4 为 (Test B max, max ratio) 的唯一 Pareto 点；Part 5 在 5 个 principled α 候选间比较，以 **band-symmetric `α = 1.9547`** 作为可推导的结构选择；Part 6 把 production 的剩余误差分解为"K=4 家族天花板"（Oracle floor）vs"3-参数 regressor gap"，并用 Abbe 误差图定位 gap 集中在 FK 簇与高-n_d 火石；6.4 给出 Chebyshev 对比——generic polynomial 可以在 n(λ) 端到端上接近 Buchdahl，但 V_d / P_{g,F} 滑移 up to ~23 Abbe 单位 / ~0.05 使其不适合作 production coordinate。legacy 构造下的启发式已作为内嵌一表对照保留在 Part 1，不再有独立 notebook。 |
 | 02 | 用 Conrady 二次光谱公式作为外部"现实检验" —— 若锚点保留 3 参数模型对 S 的排序与 Sellmeier 真值不一致，模型就失败了。 |
 | 03 | 把模型嵌入自动微分框架，把公差分析的**中心问题**（输出的一阶响应）从采样方法（MC）化为一次反向传播（J·Σ·Jᵀ）；并在 `dispersionlab.solve_nu12_from_nu34` 的 torch 可微实现下同时对玻璃参数与曲率求梯度。 |
 | 04 | 在 §1.4 的锚点保留构造下做 **Level-2 ablation**：比较 20-D 线性、MLP、Oracle 三种 `(n_d, V_d, ΔP_{g,F}) → (ν₃, ν₄)` 预测器；结合 legacy 构造做 4 变体对照，给出 F/G 下游物理量的定量差距和 MLP vs Linear 的干净**负结果**。 |
@@ -159,110 +159,136 @@ $$\underbrace{\|n - n_{\text{fit}}\|}_{\text{拟合层}} + \underbrace{\|n_{\tex
 
 ### 2.2 实验设计与核心发现
 
-本节的实验不是一次性给出最终误差，而是按三个层次逐步排除风险：
+NB01 的实验按锚点保留家族内部的决策链展开：先固定**构造方式**（锚点保留 vs legacy），然后在这个家族内逐级回答"选什么聚合判据"、"选哪个 K"、"选哪个 α"，最后把 production 的剩余误差分解到"家族天花板 vs 3-参数回归"两条独立的下游改进轴。
 
-1. **先测拟合层。** 如果已经知道某块玻璃的完整 Sellmeier 曲线，Buchdahl 函数族本身能把这条曲线拟合到多好？这一步回答"模型形式有没有足够表达能力"。
-2. **再测波长泛化。** 如果从 17 个波长点里藏掉一个点，模型能否预测这个没见过的波长？这一步回答"高阶模型是不是只在贴采样点"。
-3. **最后测玻璃泛化。** 如果整块玻璃在训练时没见过，只给 `(n_d, V_d, ΔP_{g,F})`，回归模型能否预测它的 Buchdahl 高阶形状？这一步回答"三参数回归能不能用于新玻璃"。
+1. **Part 1 — 构造方式**。legacy `[ν₁, ν₂] = M⁻¹·[Δn_FC, Δn_gF]` vs 锚点保留 `[ν₁, ν₂] = a − B·[ν₃, ν₄]`：第一种忽略 `D·[ν₃, ν₄]` 项，对 544 玻璃造成 `V_d` 滑移 `~1.14` 单位；第二种在机器精度保留所有三个锚点。主线家族选锚点保留。
+2. **Part 3 — 聚合判据**。`(K, α)` sweep 的 543 个 (K, α) 组合对应一条 Test A 曲线；按 p50 / p95 / p99 / max 聚合给出不同的 `α*(K)` 曲线。把每个聚合下的 `α*(K=4)` 拿去跑 Test B cross-glass CV，结果显示 **Test A max 选出的 α 给出最低 Test B max**——于是生产判据锁定在 max。
+3. **Part 4 — K 选择**。max 判据下扫描 K ∈ {2..8}，画 Test B max 与 max-ratio 两条曲线：**K = 4 是 (Test B max, max ratio) 的唯一 Pareto 点**——K ≥ 5 在 ratio 上急升，K = 2/3 在 max 上不够。
+4. **Part 5 — α 选择**。在 K = 4 上做 α ∈ [1.00, 2.40] 步长 0.02 的细扫，同时与 5 个 principled 候选对比；**band-symmetric `α = (b−a)/(2ab) = 1.9547`** 是唯一同时满足 (i) 从波长端点可派生，(ii) 位于 Test B max cliff-plateau 平台上，(iii) `cond(M) ≈ 9.45` 良条件的选择。
+5. **Part 6 — 误差分解**。把 production 的剩余 n(λ) 误差分成 **K = 4 家族天花板**（Oracle 逐玻璃 LSQ）和 **3-参数 regressor gap**（20-D 线性回归引入的增量），并把两者投影到 Abbe 平面，给出"哪些玻璃该用 model / 哪些该回 Sellmeier"的设计空间图。
 
-因此，下面的表格应按"拟合层 → Test A → Test B → 端到端"的顺序读：前两步选择可靠的 Buchdahl 阶数，Test B 检查三参数回归的泛化，端到端误差则汇总完整工作流的最终表现。
+**数据：** 544 条有效玻璃曲线（从 Optiland 649 条中按 0.365–2.3 μm 完整 Sellmeier 支撑筛选得到；剔除异常条目 L-BAL43，其目录 `ΔP_{g,F} = 0.5415`，重算 ≈ −0.002）。
 
-**数据：** 543 条有效玻璃曲线（从 Optiland 649 条中按 0.365–2.3 μm 完整 Sellmeier 支撑筛选得到；并剔除异常条目 L-BAL43，其目录 ΔP_{g,F} = 0.5415，重算 ≈ −0.002）。
+---
 
-**Plot 1 — 目录 3D 足迹 (nd, Vd, ΔPg,F) + 凸包。**
+**Plot 1 — 目录足迹 `(V_d, n_d, ΔP_{g,F})`：2D 投影 + 3D 凸包。**
 ![Plot 1](./images/nb01_plot1_catalog_hull.png)
-*视觉分析：左上 Abbe 图显示典型的"逗号"分布（高 Vd 低 nd → 低 Vd 高 nd 的连续带）；右上 dPgF vs Vd 子图清晰勾出 Schott 正常线及其上方的 FK 簇（ΔPg,F > 0.03 的孤立点群）。下方 3D 图揭示凸包在 **高-Vd 且正 dPgF** 的角上非常稀疏 —— 正是这个稀疏区使 Notebook 02 Claim D 的连续最优落到凸包外。*
+*视觉分析：(a) Abbe 图显示典型的"逗号"分布（高 `V_d` 低 `n_d` → 低 `V_d` 高 `n_d` 的连续带）；(b) `ΔP_{g,F}` vs `V_d` 子图清晰勾出 Schott normal line (黑色虚线) 及其上方的 FK 簇（`ΔP_{g,F} > 0.03` 的孤立点群，24 玻璃）；(c) 3D 凸包是训练域的权威边界——在 **高-`V_d` 且正 `ΔP_{g,F}`** 角上非常稀疏，`n_d > 1.9` 火石带同样稀疏（15 玻璃）。(a)(b) 是 per-plane 2D extents，只有 (c) 决定 (ν₃, ν₄) 回归的有效区；Part 6.3 的 Abbe 误差图会把这两个稀疏角作为重点标记。*
 
-**拟合层（α 与阶数的联合优化）：** 对每条玻璃直接拟合 Buchdahl 系数，比较不同阶数和不同 `α` 下的最大重建误差。这一步只评价函数族表达能力，不评价三参数回归。
+---
 
-| Order | Best α | Max Err (α_opt) | Max Err (α=2.5) | 提升 |
-|:---:|:---:|:---:|:---:|:---:|
-| 2 | 2.591 | 8.19e-03 | 8.42e-03 | 1.0× |
-| 3 | 1.933 | 3.58e-03 | 5.65e-03 | 1.6× |
-| **4** | **1.818** | **2.39e-03** | 2.99e-03 | 1.2× |
-| 5 | 1.560 | 6.53e-04 | 2.03e-03 | 3.1× |
+**Part 1 — 两种构造的 V_d / P_{g,F} 滑移对比（544 玻璃）：**
 
-**Plot 2 — 4 条代表玻璃的残差 vs 波长（orders 2/3/4）。**
-![Plot 2](./images/nb01_plot2_residuals.png)
-*视觉分析：所有四条子图的残差曲线在 order 4 处**幅度降到 ±0.0002 以内**，且呈现 order-k 多项式逼近特有的"k+1 次摆动"特征（order 4 残差在可见区有 5 个局部极值）—— 这是 Chebyshev 等振荡定理的数值印证。误差集中于 UV (< 0.4 μm) 与 NIR (> 1.8 μm) 端，可见区 (0.4–0.7 μm) 残差极小。*
-
-**Plot 3 — 阶数收敛曲线（α = 2.5，log-y）。**
-![Plot 3](./images/nb01_plot3_order_convergence.png)
-*视觉分析：max（红）与 mean（蓝）曲线**近似平行**下降约 2 个数量级（5e-2 → 4e-4），表明目录内"最坏玻璃"与"平均玻璃"的误差以相同速率收敛 —— 不存在某种病态玻璃拖累整体阶数选择。*
-
-**Plot 4 — α 优化曲线（orders 2–5）。**
-![Plot 4](./images/nb01_plot4_alpha_optimization.png)
-*视觉分析：每一阶都呈现清晰的 V 形谷；order 4（绿）谷底在 α ≈ 1.8 处**宽而平坦** —— 意味着 ±0.2 的 α 波动几乎不影响拟合质量，**工程上鲁棒**。order 5（红）谷底更低但更陡峭，对 α 选择敏感，说明 order 5 的"优势"建立在精确调参之上，可复现性差。*
-
-**Plot 5 — α = 2.5 vs α_opt 逐阶收敛对比。**
-![Plot 5](./images/nb01_plot5_alpha_compare.png)
-*视觉分析：在 order 2–3 处 α-优化几乎无收益（虚实线几乎重合）；从 order 4 开始分叉越来越大，到 order 6 α-优化的 mean 已领先 α=2.5 约 3×。**这证明 α 优化的价值随阶数放大**，同时也解释了为什么高阶 Buchdahl 文献常强调 α 需按应用重新标定。*
-
-**Test A（17 点留一波长）——过拟合的边界：** 每次从 17 个波长采样中留出一个点，用剩余 16 个点拟合，再测试被留出波长上的误差。`hold / train` 接近 1 表示模型对未见波长也稳定；该比值明显升高则说明模型开始贴采样网格。
-
-- Order 4：hold / train 比 ≈ 1.0×（留出等于训练，无过拟合）。
-- Order 5：比率 3.8×；Order 6+：比率升至 10²–10⁴ 级。
-
-**Plot 6 — Test A 波长留出（orders 2–8）。**
-![Plot 6](./images/nb01_plot6_testA_holdout.png)
-*视觉分析：在 order 1–4，所有四条曲线（train / hold × α=2.5 / α\*）几乎贴合，hold 与 train 同步下降。**从 order 5 开始 α=2.5 的 hold 曲线（红方虚线）陡然反转上升**，到 order 8 已爬升至 ~3e-2，同时 train 降到 ~1e-7 —— 经典过拟合 "U 型"。α\* 的 hold（红方实线）稍好但仍在 order 4 后转为平台，且与 train 分离 4 个量级。这张图在视觉上明确指示 order 4 是"hold 仍跟 train"的**最后一个安全阶数**。*
-
-**Test B（玻璃级 5-fold CV）——回归泛化：** 把 543 块玻璃分成 5 份，每次用 4 份训练 `(n_d, V_d, ΔP_{g,F}) → (ν₃, ν₄)` 回归，用剩下 1 份作为完全未见过的新玻璃测试。表中 `In-Fold` / `Out-of-Fold` 分别是训练玻璃 / 未见玻璃的误差分布；`Percentile` 是各列误差的百分位（50% = 中位数，95%/99% = 尾部，`max` = 最差玻璃），`Ratio` 是同一百分位上的 `Out-of-Fold / In-Fold`。
-
-| Percentile | In-Fold | Out-of-Fold | Ratio |
-|:---:|:---:|:---:|:---:|
-| 50 % | 2.20e-03 | 2.20e-03 | 1.00 |
-| 95 % | 3.64e-03 | 3.72e-03 | 1.02 |
-| 99 % | 4.71e-03 | 4.84e-03 | 1.03 |
-| max | 7.66e-03 | 1.62e-02 | 2.12 |
-
-**Plot 7 — (ν₃, ν₄) 回归残差热图。**
-![Plot 7](./images/nb01_plot7_regression_heatmap.png)
-*视觉分析：ν₃ 子图整体淡色（残差 ~ ±0.02 级），但有**系统性结构**：高 nd 低 Vd（图右下火石带）上出现成簇的深红（正残差），高 Vd 低 nd（图左上 FK 区）出现深蓝（负残差）。ν₄ 残差幅度更大（~0.1 级）且结构更显著。标题"systematic structure = missing features"准确描述 —— 这些方向性残差不是随机噪声，而暗示 3 参数之外存在未被编码的物理信息；Phase 2 的残差修正正是试图吃掉这部分剩余结构。*
-
-**Plot 9 — Test B 回归泛化 5-fold CV。**
-![Plot 9](./images/nb01_plot9_testB_cv.png)
-*视觉分析：两条 CDF 曲线（in-fold 蓝、out-of-fold 红）**完全重合到视觉无法分辨** —— 除了 100 百分位尾部有微小分叉。这是 "3 参数到 (ν₃, ν₄) 回归能泛化"的最直接视觉证据；表面上只是两条线，但两条线完全重合本身就是 1.03× 比率在定性上的表达。*
-
-**端到端误差（production: α = 1.9547，Order 4）：** 从三个目录参数出发，经过高阶系数回归、锚点系数构造，再重建整条 `n(λ)` 并与 Sellmeier 真值比较。这是完整"三参数输入 → 曲线输出"任务的总误差。
-
-| Method | Max | Mean |
+| 度量 | legacy 构造 | 锚点保留构造 |
 |:---|:---:|:---:|
-| Chebyshev (20-dim → 9 coefs) | 0.1955 | 0.0125 |
-| Buchdahl + reg (α = 2.5) | 0.00759 | 0.00338 |
-| Buchdahl + reg (α = 1.818, legacy) | 0.00766 | 0.00274 |
-| **Buchdahl + reg (α = 1.9547, production)** | **0.00667** | **0.00274** |
+| F1 max（n_d 锚点）| 0 | 0 |
+| F2 abs max（V_d 滑移） | ~1.14 单位 | ~5·10⁻¹² |
+| F3 max（ΔP_{g,F} 滑移） | ~1·10⁻³ | ~1·10⁻¹⁴ |
+| bare max 重建误差 | 与锚点保留同量级 | 2.4·10⁻³ |
 
-阈值内玻璃数（α = 1.9547）：`< 5e-3: 533/544 (98 %)`，`< 1e-2: 544/544 (100 %)`。三档 α 的端到端误差量级相同——它们同处 K=4 α-谷的平台，差别主要在每玻璃 max 的尾部；`α = 1.9547` 的选择依据是 §1.6 的 band-symmetric 派生与 NB01 Part 5 的 principled 候选对比，而非最小化端到端误差。
+legacy 的 `V_d` 滑移 `~1.14` 单位是定义冲突的直接后果——F−C 差分方程被解对了，但忽略了 `D·[ν₃, ν₄]` 在右端的贡献。锚点保留构造通过 `[ν₁, ν₂] = a − B·[ν₃, ν₄]` 的逆向耦合让三个锚点由构造严格为零。主线所有后续实验都在锚点保留家族内进行。
 
-**Plot 8 — 端到端误差 CDF + Abbe 图按误差着色。**
-![Plot 8](./images/nb01_plot8_cdf_abbe.png)
-*视觉分析：左 CDF 图中四条曲线**从左到右的顺序**即从好到差：红（Buch+reg α=1.9547，production）→ 橙（Buch+reg α=2.5）→ 灰（Buch 截断）→ 蓝（Chebyshev）。红色曲线在 5e-3 处已达 ~98%，蓝色曲线直到 1e-1 才饱和 —— **Chebyshev 与 Buchdahl 在 CDF 上横跨近 2 个量级**。右 Abbe 图显示"黄绿色"（高误差 > 5e-3）仅集中在两个角：(1) 极右侧 nd ≈ 2.1, Vd < 25 的高折射率火石；(2) 极端 nd 点；(3) 少数 dPgF 异常玻璃。中央主带 (nd 1.55-1.75, Vd 35-70) 整片深紫色，**模型在标准设计空间的误差 < 1×10⁻³**。这张图直接给设计师"哪些玻璃用模型来公差分析安全"的直观答案。*
+---
+
+**Plot 2 — 粗粒 `(K × α)` sweep：p95 聚合下的 α\*(K)。**
+![Plot 2](./images/nb01_plot2_coarse_sweep_p95.png)
+*视觉分析：p95 聚合下每个 K 的 Test A p95 曲线呈 V 形谷。`α*(p95)` 随 K 单调下移：K=2 约 1.4，K=4 约 1.36，K=8 约 1.20；即"典型玻璃"倾向小 α 来让 ω 区间更紧。但 p95 只反映第 95 个百分位的典型玻璃，tail（p99, max）的偏好完全不同——这是 Part 3.2 要探讨的。*
+
+---
+
+**Plot 3 — K=4 下四种聚合判据的 α 响应。**
+![Plot 3](./images/nb01_plot3_K4_aggregations.png)
+*视觉分析：四条曲线（p50 / p95 / p99 / max）在 K=4 上各自给出不同的 `α*`：p50 ≈ 1.20，p95 ≈ 1.36，p99 ≈ 1.52，max ≈ 1.92——**`α*` 从 p50 到 max 单调升约 0.72**。原因：max 判据把 tail 玻璃（FK 簇、高-`n_d` 火石）的约束放大，这些玻璃需要**更强的 ω 压缩**（更大 α）以让 Buchdahl 4 项多项式更均衡地覆盖 UV-NIR 范围。p50/p95 拉向小 α 是典型玻璃的需求，max 拉向大 α 是尾部玻璃的需求。*
+
+Part 3.3 用 Test B cross-glass CV 验证："Test A max → Test B max 最低" 的 α 是最优生产判据：
+
+| Test A 聚合 | `α*(K=4)` | Test B max (out-of-fold) |
+|:---:|:---:|:---:|
+| p50 | 1.20 | 2.24·10⁻² |
+| p95 | 1.36 | 1.84·10⁻² |
+| p99 | 1.52 | 1.40·10⁻² |
+| **max** | **1.92** | **7.74·10⁻³** |
+
+max 判据比 p99 低一倍、比 p50 低三倍——**生产判据锁定 Test A max**。
+
+---
+
+**Plot 4 — K Pareto 分析：max 判据下 Test B max 与 max-ratio 随 K 变化。**
+![Plot 4](./images/nb01_plot4_K_pareto.png)
+*视觉分析：左子图 Test B max 在 K=4 处 ≈ 7.7·10⁻³ 达到平台，K=5/6 微升到 ~7.9·10⁻³，K=7/8 回到 ~7.6·10⁻³；**K=6 与 K=4 在 max 上基本并列**。右子图 max-ratio (Test B max out / max in) 是 cross-glass 外推稳定性的度量：K ≤ 4 时 ratio ≈ 1.1×（regressor 能可靠外推到最差玻璃），K ≥ 5 跳到 1.7–2.4×（外推崩溃）。**K=4 是 (Test B max ↓, max ratio ↓=1) 的唯一 Pareto 点**——K=6 在 max 上并列但 ratio 失败 (1.75×)，每个其他 K 都在至少一个轴上被严格支配。*
+
+---
+
+**Plot 5 — K=4 精细 α 扫描：Test A / Test B max 对 α 的响应。**
+![Plot 5](./images/nb01_plot5_alpha_fine_sweep.png)
+*视觉分析：步长 0.02 精细扫 α ∈ [1.00, 2.40]。Test A max (蓝线) 和 Test B max (红线) 都呈现宽平底的 U 谷——Test A 最小在 α ≈ 1.94，Test B 最小在 α ≈ 1.92；**两者在 α ≈ 1.88–2.00 区间都处于平台内**（cliff-to-plateau knee）。Plot 注明的 5 个 principled 候选（band-symmetric = 1.9547、Mercado-Robb Sellmeier 2nd-deriv = 2.536、IR/UV asymptotic = 2.247、anchor-line symmetric、min cond(M)）中，只有 band-symmetric 1.9547 落在平台内。legacy 的 α = 1.818 **恰好在 cliff 边缘**（Test B max 从 7.7e-3 急升至 8.0e-3 的拐点），这个位置既没有派生支撑也在数值上紧贴悬崖——于是 NB01 用 band-symmetric 1.9547 替代它。*
+
+---
+
+**Part 6.1 — 误差分解（K=4, α=1.9547）：**
+
+| Percentile | Oracle floor | Prod in-fold | Prod out-of-fold | Gap out-fold |
+|:---:|:---:|:---:|:---:|:---:|
+| p50 | 2.38·10⁻³ | 2.65·10⁻³ | 2.69·10⁻³ | 0.32·10⁻³ |
+| p95 | 3.13·10⁻³ | 4.25·10⁻³ | 4.52·10⁻³ | 1.39·10⁻³ |
+| p99 | 3.23·10⁻³ | 5.22·10⁻³ | 5.45·10⁻³ | 2.22·10⁻³ |
+| max | 4.48·10⁻³ | 6.86·10⁻³ | 7.72·10⁻³ | 3.24·10⁻³ |
+
+Oracle floor = 每玻璃对 Sellmeier 真值做锚点约束 LSQ 得到的最优 `(ν₃, ν₄)` 下的重建误差——这是 K=4 锚点保留家族的**信息天花板**。Production = 用 20-D 线性回归预测 `(ν₃, ν₄)` 的端到端误差。Gap 随百分位递增（p50 13% → max 72%），意味着**典型玻璃受家族天花板限制，尾部玻璃受 3-参数映射信息损失主导**。
+
+---
+
+**Plot 6 — Oracle floor vs production 端到端 CDF。**
+![Plot 6](./images/nb01_plot6_oracle_cdf.png)
+*视觉分析：三条 CDF 曲线在 log-x 上清晰分层——黑色 Oracle floor 在 4.5·10⁻³ 处早早饱和到 1.0，红色 production out-of-fold 拉长到 7.7·10⁻³，蓝色 in-fold 几乎和 out-of-fold 重合。**in-fold / out-of-fold 分叉极小**（整条曲线 ≤ 10%）——cross-glass CV 不是瓶颈；真正的分叉是 Oracle 和 production 之间的 gap，它在 p50 很小但在 p95+ 明显。这张图的读法：黑色是"K=4 家族内最好的你能做到的"，红黑之间是"3-参数映射买不回来的"。*
+
+---
+
+**Plot 7 — Level-2 (ν₃, ν₄) 回归残差在 Abbe 平面的结构。**
+![Plot 7](./images/nb01_plot7_nu_residual_map.png)
+*视觉分析：`(ν₃, ν₄)` 残差是 Level-2 **回归诊断量**，不是光学误差。左 ν₃ 和右 ν₄ 子图都呈现**有结构的红/蓝块状分布**，不是随机噪声：ν₃ 在高 `V_d` + 正 `ΔP_{g,F}` 区（FK 簇）呈深蓝负残差，在高 `n_d` 火石角呈深红正残差；ν₄ 类似但幅度更大（~±5·10⁻²）。这是 3-参数到 `(ν₃, ν₄)` 映射"缺结构"的信号——FK 和高 `n_d` 角在 `(n_d, V_d, ΔP_{g,F})` 特征空间中是训练稀疏区，linear 20-D regressor 缺少局部邻居。NB04 Level-2 ablation 在这个 gap 上做了 MLP vs linear 对比，给出了干净的负结果（特征工程是关键，不是模型容量）。*
+
+---
+
+**Plot 8 — Production 端到端 n(λ) 误差在设计空间的分布。**
+![Plot 8](./images/nb01_plot8_design_space_error.png)
+*视觉分析：按 `log₁₀ max_λ |n_pred(λ) − n_Sellmeier(λ)|` 着色。中央主带 (`n_d ∈ [1.5, 1.75]`, `V_d ∈ [35, 70]`，508 玻璃) 整片深紫色，`|Δn|` 中位 ≈ 2.7·10⁻³、p95 ≈ 4.2·10⁻³、max ≈ 7.0·10⁻³——**这个区域的 production surrogate 最不可能主导下游不确定性**。红色圆圈标记的 **FK 簇 (24 玻璃) 是双峰**：多数 FK 比内部玻璃更好（中位 1.5·10⁻³），但 tail 拉到 7.7·10⁻³（catalog 最差玻璃就在这里）；橙色圆圈标记的 **高-`n_d` 火石 (15 玻璃)** 则是在 median/p95/max 上一致地比内部更差。这张图给设计师的 actionable 信息：substitution 候选落在 FK / 火石角时先手动验 Sellmeier，落在内部时可以直接信任。*
+
+---
+
+**Part 6.4 — Chebyshev 对比（matched protocol）：**
+
+| | Buchdahl (K=4, α=1.9547) | Chebyshev (deg 8, 9 coefs) |
+|:---|:---:|:---:|
+| per-glass fit-layer max (p95) | 3.13·10⁻³ | **3.24·10⁻⁴** |
+| end-to-end \|Δn\| out-of-fold (p95) | 4.52·10⁻³ | **2.37·10⁻³** |
+| end-to-end \|Δn\| out-of-fold (max) | 7.72·10⁻³ | 7.83·10⁻³ |
+| V_d slip out-of-fold (max) | **0** | **23.1** 单位 |
+| ΔP_{g,F} slip out-of-fold (max) | **0** | **0.050** |
+
+Chebyshev 在 `n(λ)` 端到端 p95 上实际**好于** Buchdahl 1.9×，per-glass fit-layer 上好 10×——approximation capacity 没有争议。但 Chebyshev 没有 anchor semantics：20-D 回归预测的曲线会让 `V_d` 最多偏 23 Abbe 单位、`ΔP_{g,F}` 最多偏 0.05（足以让玻璃跨 FK 门槛）。**Buchdahl 被选为 production coordinate 是为了 anchor semantics，不是为了 `n(λ)` approximation quality**——这是 Part 6.4 的核心方法论点。
 
 ### 2.3 分析
 
-**为什么 α = 1.9547 而非经典的 2.5，也不是 legacy 的 1.818。** 波长范围决定 ω 域的端点不对称程度。从 0.365 到 2.3 μm 的非对称区间（d 线偏短波侧）下，α = 2.5 让 ω 范围明显负偏；自然的 principled 选择是要求 ω(λ_max) = −ω(λ_min)（**band-symmetric**），即 `α* = (λ_max − λ_d − (λ_d − λ_min)) / (2·(λ_d − λ_min)·(λ_max − λ_d)) = 1.9547 μm⁻¹`。该值从波长端点直接写出，不依赖训练集。早期报告曾采用 `α = 1.818`，该值来自 legacy 构造下的 per-glass fit-layer sweep 的数据拟合最小点（上一节拟合层表中 Order 4 的 Best α 列），缺少独立的派生依据；NB01 重写后，Part 5 在 5 个 principled 候选（data-driven fit-min 1.818、NB01 legacy 1.818、band-symmetric 1.9547、fine-sweep Test A min、Test B min）间比较，发现 1.9547 位于 Test B `max(ratio)` 的 cliff-plateau 平台上、条件数 `cond(M) ≈ 9.45` 良条件、且有可推导的结构解释——因此作为 production α。从函数逼近角度看，band-symmetric 让 ω 区间端点相对 0 对称，对 4 阶多项式的 Chebyshev-like 最佳逼近常数更小。
+**为什么 α = 1.9547 而非经典的 2.5，也不是 legacy 的 1.818。** 波长范围决定 ω 域的端点不对称程度。从 0.365 到 2.3 μm 的非对称区间（d 线偏短波侧）下，α = 2.5 让 ω 范围明显负偏；自然的 principled 选择是要求 `ω(λ_max) = −ω(λ_min)`（**band-symmetric**），即
 
-**为什么 Order 4 是当前协议下的有效上限。** 每条曲线只有 17 个波长采样点，而 4 阶 Buchdahl 已使用 `ν₁...ν₄` 四个形状自由度解释主要色散结构，残差空间约为 `17 − 4 = 13` 个自由方向。从**有效自由度**角度，Order 5 已经开始消耗有限的残差检验空间，Order 6+ 的优化更容易贴合采样噪声或端点偶然误差 —— Test A 的 3.8× 跳跃是这一临界现象的显式指标。注意：此"上限"的范围是**当前数据量 + 当前 17 波长采样 + 当前正则设置**。在更密的波长网格（≥ 30 点）或对 `ν_{k≥3}` 加结构正则后，更高阶 Buchdahl 仍可能带来收益 —— 但那已是另一协议下的实验（见 §8 未来方向）。
+$$\alpha^* = \frac{(\lambda_{\max}-\lambda_d) - (\lambda_d-\lambda_{\min})}{2(\lambda_d-\lambda_{\min})(\lambda_{\max}-\lambda_d)} = 1.9547 \; \mu\text{m}^{-1}$$
 
-**两种 Chebyshev 比较：区分"拟合层"与"端到端"。** 容易混淆之处：Chebyshev 的拟合层（逐玻璃直接最小二乘）确实**优于** Buchdahl —— Chebyshev 多项式在 `[−1, 1]` 上给出 `n(λ)` 的近最佳一致逼近，其逐条曲线残差比 4 阶 Buchdahl 小 10× 以上。但这是两种不同任务的结果：
+该值从波长端点直接写出，不依赖训练集。早期报告曾采用 `α = 1.818`，该值来自 legacy 构造下的 per-glass fit-layer sweep 的数据拟合最小点，缺少独立的派生依据；更糟糕的是 Plot 5 显示 1.818 **恰好在 Test B max cliff-to-plateau 拐点处**——一个既无派生支撑又紧贴悬崖的位置。NB01 Part 5 在 5 个 principled 候选（band-symmetric 1.9547、anchor-line symmetric、min `cond(M)`、IR/UV asymptotic 2.247、Mercado-Robb Sellmeier 2nd-deriv 2.536）间比较，发现只有 **band-symmetric 1.9547** 同时满足 (i) 可派生、(ii) 位于平台内部、(iii) `cond(M) ≈ 9.45` 良条件。从函数逼近角度看，band-symmetric 让 ω 区间端点相对 0 对称，对 4 阶多项式的 Chebyshev-like 最佳逼近常数更小。
 
-| 任务 | Chebyshev | Buchdahl |
-|:---|:---:|:---:|
-| 逐玻璃直接拟合（拟合层） | **优** | 劣 |
-| 从 3 参数回归恢复系数（端到端） | **差** | 优 |
+**为什么 K = 4 是唯一 Pareto 点。** Plot 4 在 Test B max 与 max-ratio 两个轴上同时评价：K = 4 是唯一同时在 max 上接近平台最小（7.7e-3 vs 全局最小 7.6e-3）和在 ratio 上保持稳定（1.14×）的选择；K=6 在 max 上并列但 ratio 跳到 1.75×——regressor 在最差玻璃上失去外推能力；K=2/3 在 max 上不够；K ≥ 5 是 ratio 悬崖。注意：**这个结论特定于 544 玻璃 + 17 波长网格 + 20-D linear regressor 的当前协议**。在更密的波长网格或带结构正则的高阶回归下，高阶 K 仍可能更优（见 §8 accuracy frontier 路线）。
 
-端到端表格中 Chebyshev 的失败发生在第二个任务上：Chebyshev 系数是"**数学假象**"——它们与物理量 `(n_d, V_d, ΔP_{g,F})` 没有直接线性关系，无法从 3 参数回归恢复。Buchdahl 的优势是**跨玻璃可回归性**：`(ν₁, ν₂)` 由锚点耦合解严格保留物理定义，`(ν₃, ν₄)` 描述异常色散 —— 正好是 ΔP_{g,F} 编码的信息。**拟合能力不等于下游可用性**，这是全篇反复验证的方法论主题。
+**两种 Chebyshev 比较：区分"approximation quality"与"production coordinate"。** 容易误读的一点：Chebyshev 在端到端 `n(λ)` p95 上**好于** Buchdahl 1.9×，并非仅在 fit-layer——Part 6.4 的精确测量已确认。但 Buchdahl 的生产优势**不在 `n(λ)` approximation**，而在两个 3-参数 surrogate 必要的性质上：(i) `(ν₃, ν₄)` 与 `(n_d, V_d, ΔP_{g,F})` 线性可回归（物理耦合），(ii) `V_d` / `P_{g,F}` 由构造严格保留（Chebyshev 会滑移高达 23 Abbe 单位）。下游任何依赖目录参数定义的量（NB02 apo-doublet `S`、NB03 J·Σ·Jᵀ、玻璃替换工作流）都需要 anchor semantics，而不是 `n(λ)` 更小——这是 Chebyshev 在这个 pipeline 里不是 production coordinate 的真实原因。
 
-**Test B 的结构意义。** 99 百分位处 train/test 比率 1.03× 意味着：当新玻璃的 `(n_d, V_d, ΔP_{g,F})` 进入训练集凸包内时，模型的泛化是**统计上成立**的。极端尾部（100 百分位 ratio = 2.12）对应凸包外推 —— 这在 Notebook 02 的 Claim D 与 Notebook 04 的 FK 外推测试中得到重现。从 Plot 9 的视觉上看，两条 CDF 完全重叠到视觉不可辨，这是泛化成功的直观图形证据。
+**Test B 的结构意义。** p50 / p95 / p99 上 train/test ratio ≈ 1.00/1.02/1.03 意味着：当新玻璃的 `(n_d, V_d, ΔP_{g,F})` 进入训练集凸包内时，模型的泛化是**统计上成立**的。极端尾部（max ratio 1.14× 在 K=4 下）对应凸包边界外推——这在 NB02 Claim D 与 NB04 的 FK 外推测试中得到重现。Plot 6 的视觉证据：in-fold (蓝) 和 out-of-fold (红) CDF **在 p50–p95 上完全重合**，只在 tail 有 ≤ 10% 分叉。
 
-**Test A 的 U 形揭示。** Plot 6：α=2.5 的 hold 曲线在 order 4 达到最小值 ~3e-3 后**拐头向上**，到 order 8 已涨到 ~3e-2（高了一个量级）；而 train 曲线持续下降到 1e-7。这种经典的 U 形**偏差-方差权衡曲线**表明：在当前 17 波长网格下，order > 4 后模型开始拟合采样噪声。因此 order 4 不是"经验拍脑袋"，而是**该曲线拐点处、当前协议下的最优阶数**。
+**误差分解的下游含义。** Part 6 把 production 剩余误差干净地分成两条独立轴：(a) **K=4 family floor**（Oracle 做到 4.5e-3 max）——p50/p95 的主导项，改善需要离开 K=4 家族，这是 NB05 `ε·q(λ)·tanh(NN)` 残差修正的切入口；(b) **3-parameter regressor gap**（production - Oracle，在 max 处 3.2e-3）——p99/max 的主导项，改善需要更有表达力的 regressor，这是 NB04 Level-2 ablation 测试的轴。NB04 给出了干净的负结果：MLP ≈ linear 20-D，说明"regressor capacity 不是瓶颈，feature engineering 才是"。两条下游路径由此分工明确。
 
 ### 2.4 小结
 
 Notebook 01 不仅"跑通"Buchdahl 模型，更回答了三个结构性问题：(a) 在可用的 17 波长网格和 544 玻璃样本下，**Order 4** 是函数逼近理论与统计泛化理论共同决定的甜点；(b) 3 参数到 4 系数的分层映射是可泛化的，99 百分位 CV 比率 ≈ 1.03× 给出该论点的严格数值边界；(c) α 的选择是 principled 的——在 5 个候选中（data-driven fit-min、NB01 legacy、band-symmetric、Test A min、Test B min），**band-symmetric `α = 1.9547`** 同时满足可派生性、条件数良好与 Test B cliff-plateau 平台位置，取代 legacy 的 `α = 1.818`。
 
-NB01 叙事已彻底重写为 anchor-preserving-first 版本（见 `scripts/build_01_model_glass_buchdahl.py`）：主线五节直接承载 §1.4–§1.6 的结论，legacy 构造下的启发式分析归档到 `notebooks/01_legacy_reference.ipynb` 作为历史参考。§1.4 的锚点保留构造通过 `dispersionlab` 共享模块交付给 NB02–NB05，并在 `tests/test_anchor_delta.py` / `tests/test_sweep_anchor_delta.py` 做 CI 检查。
+NB01 叙事已彻底重写为 anchor-preserving-first 版本（见 `scripts/build_01_model_glass_buchdahl.py`）：主线六节（Parts 0–6）直接承载 §1.4–§1.6 的结论，legacy 构造下的启发式分析作为 Part 1 内嵌的一表对照（不再有独立 notebook）。§1.4 的锚点保留构造通过 `dispersionlab` 共享模块交付给 NB02–NB05，并在 `tests/test_anchor_delta.py` / `tests/test_sweep_anchor_delta.py` 做 CI 检查。
 
 ---
 
@@ -755,7 +781,7 @@ Notebook 03 确立的 torch 自动微分基础设施让：
 
 **工程侧（应进 CI）：**
 
-7. ~~**NB01 叙事对齐**~~（**已完成**，2026-04-19）。NB01 已彻底重写为 anchor-preserving-first 版本（`scripts/build_01_model_glass_buchdahl.py`），主线五节完全承载 §1.4–§1.6 的结论：Part 1 legacy/anchor 断定、Part 2 家族定义、Part 3 (K × α) sweep、Part 4 K=3/K=4/K=8 三点对比、Part 5 Test B CV。Legacy 构造下的启发式分析归档到 `notebooks/01_legacy_reference.ipynb` 作为历史参考。
+7. ~~**NB01 叙事对齐**~~（**已完成**，2026-04-19；2026-04-20 扩展至单一 notebook）。NB01 已彻底重写为 anchor-preserving-first 版本（`scripts/build_01_model_glass_buchdahl.py`），主线六节（Parts 0–6）完全承载 §1.4–§1.6 的结论：Part 0 catalog 几何、Part 1 legacy/anchor 断定、Part 2 家族定义、Part 3 聚合判据、Part 4 K 选择、Part 5 α 选择（5 候选）、Part 6 Oracle 分解 + 设计空间误差图 + Chebyshev 对比。Legacy 构造下的启发式分析作为 Part 1 内嵌一表对照，不再有独立 notebook。
 8. 用真实熔次数据（melt-to-melt covariance）替换 Schott Step 1.0 独立高斯假设，进入完整制造级公差模型。
 9. **测试覆盖。** 当前 `tests/test_anchor_delta.py` 与 `tests/test_sweep_anchor_delta.py` 已把 F1/F2/F3 锚点不变性（frozen 与 swept 两条路径）写成 CI 级检查；建议扩展为端到端管道回归测试（例如 NB02 Claim C 的 Spearman 不降、NB03 的 `dS/dΔP_{g,F}` 符号一致），避免未来某次重构再次让下游指标静默漂移。
 
@@ -770,13 +796,13 @@ report/
 ├── DispersionLab_Report.md     ← 本文件
 └── images/                      ← 图表文件目录
     ├── nb01_plot1_catalog_hull.png
-    ├── nb01_plot2_residuals.png
-    ├── nb01_plot3_order_convergence.png
-    ├── nb01_plot4_alpha_optimization.png
-    ├── nb01_plot5_alpha_compare.png
-    ├── nb01_plot6_testA_holdout.png
-    ├── nb01_plot7_regression_heatmap.png
-    ├── nb01_plot8_cdf_abbe.png
+    ├── nb01_plot2_coarse_sweep_p95.png
+    ├── nb01_plot3_K4_aggregations.png
+    ├── nb01_plot4_K_pareto.png
+    ├── nb01_plot5_alpha_fine_sweep.png
+    ├── nb01_plot6_oracle_cdf.png
+    ├── nb01_plot7_nu_residual_map.png
+    ├── nb01_plot8_design_space_error.png
     ├── nb02_fig1_nbk7_compare.png
     ├── nb02_fig2_baseline_layout.png
     ├── nb02_fig3_three_achromats.png
