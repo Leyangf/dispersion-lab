@@ -7,14 +7,18 @@ Structure:
   Part 1. Legacy vs anchor-preserving construction — one decisive table.
   Part 2. Anchor-preserving Buchdahl family: formal definition for
           arbitrary K.
-  Part 3. (K × α) sweep inside the anchor-preserving family —
-          Test A wavelength leave-one-out, p95 absolute hold error.
-  Part 4. K = 3 / K = 4 / K = 8 head-to-head tradeoff.
-  Part 5. Test B cross-glass CV at the production point (K = 4, α = 1.818).
+  Part 3. Selection criterion — aggregation (p50 / p95 / p99 / max)
+          and commitment to Test B max as the production target.
+  Part 4. K selection under the max criterion — K = 4 unique Pareto.
+  Part 5. α refinement at K = 4 — band-symmetric derivation and
+          comparison against five principled candidates.
+  Part 6. Where the remaining error comes from — Oracle floor vs
+          regressor gap (decomposition), design-space error map,
+          Chebyshev cross-check.
   Conclusion. Production / frontier / compact selection statement.
 
-The heritage legacy-construction narrative is archived at
-``notebooks/01_legacy_reference.ipynb``.
+The legacy-construction narrative is included inline in Part 1 as a
+one-table contrast; there is no separate archival notebook.
 """
 
 import json
@@ -66,17 +70,18 @@ layers:
    further experiments run on it.
 
 2. **Hyperparameter selection inside the anchor-preserving family** —
-   an (order × α) sweep on Test A absolute wavelength-holdout error (p95
-   across 544 catalog glasses) characterises the family at every
-   representative order.
+   an (order × α) sweep on Test A / Test B error under multiple
+   aggregation criteria characterises the family, and an
+   independently derived **band-symmetric** α fixes the coordinate
+   without relying on data-driven minima.
 
-3. **Three models at three tradeoff points**:
+3. **Production model and alternatives recorded for contrast**:
 
    | Model | Role | Why |
    |---|---|---|
    | **K = 3, α ≈ 1.20** | compact lower bound | smallest useful hypothesis space; 1 high-order regression target |
-   | **K = 4, α = 1.818** | **production baseline** | classical Buchdahl complexity; 2 high-order targets; used by NB02–NB05 |
-   | **K = 8, α = 1.26** | accuracy frontier | lowest p95 hold error on Sellmeier-derived ground truth |
+   | **K = 4, α = 1.9547** | **production baseline** | classical Buchdahl complexity; band-symmetric α on [0.365, 2.3] μm; used by NB02–NB05 |
+   | **K = 8, α = 1.26** | accuracy frontier | lowest p95 hold error; traded off against worst-case out/in ratio |
 
 The anchor-preserving construction is delivered by the shared
 `dispersionlab` package (`solve_nu12_from_nu34`, `feature_vec_20`,
@@ -90,13 +95,23 @@ across the full `(K, α)` grid is covered in
 cells.append(md(
 """## Contents
 
-- Part 0 — Catalog
+- Part 0 — Catalog (Plot 1: 3-D hull + Abbe + ΔP-V_d)
 - Part 1 — Legacy vs anchor-preserving construction
 - Part 2 — Anchor-preserving Buchdahl family (definition)
-- Part 3 — (K × α) sweep inside the anchor-preserving family
-- Part 4 — K = 3 / K = 4 / K = 8 head-to-head
-- Part 5 — Test B cross-glass CV at (K = 4, α = 1.818)
+- Part 3 — Selection criterion: aggregation p50 / p95 / p99 / max
+- Part 4 — K selection under the max criterion (Plot 3)
+- Part 5 — α refinement at K = 4: band-symmetric derivation, 5 principled candidates (Plot 4)
+- Part 6 — Where the remaining Test B error comes from
+  - 6.1 Oracle floor vs production CDF (Plot 5)
+  - 6.2 Where the regressor gap concentrates (Plot 6)
+  - 6.3 Production reliability vs extrapolation across design space (Plot 7)
+  - 6.4 Why not a generic polynomial basis? (Chebyshev cross-check)
 - Conclusion
+
+Five notebooks are no longer two notebooks: the legacy-construction
+analysis is included inside Part 1 as a one-table contrast, not a
+separate file. NB01 is the single authoritative notebook for the
+anchor-preserving Buchdahl production model.
 """))
 
 
@@ -132,9 +147,6 @@ from dispersionlab.buchdahl import (
 from dispersionlab.sweep import (
     anchor_error_metrics_K,
     fit_all_glasses_anchor,
-    fit_and_predict_batched,
-    fit_anchor_preserving_coefficients_K,
-    fit_legacy_coefficients_K,
     reconstruct_n_K,
     test_a_batched,
     vectorize_catalog,
@@ -173,27 +185,93 @@ print(f"  Sellmeier truth grid: {len(WAVELENGTHS)} wavelengths 0.365–2.3 μm")
 
 
 cells.append(code(
-"""# Plot 1 — catalog footprint in (V_d, n_d) and (V_d, ΔP_g,F)
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-ax1.scatter(catalog["vd"], catalog["nd"], s=10, alpha=0.55,
-            color="steelblue", edgecolors="none")
+"""# Plot 1 — catalog footprint in (V_d, n_d, ΔP_{g,F}):
+# Top row: per-plane 2D projections with 2D convex hull (reader-familiar
+#   glass-selection views);
+# Bottom row: authoritative 3D convex hull — this is the region in which
+#   the (ν₃, ν₄) regression is valid. Points outside the 3D hull are
+#   extrapolation, even if they land inside either 2D hull.
+from scipy.spatial import ConvexHull
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+_vd   = catalog["vd"]
+_nd   = catalog["nd"]
+_dPgF = catalog["dPgF"]
+_pts3 = np.column_stack([_vd, _nd, _dPgF])
+
+def _hull2d_xy(x, y):
+    pts = np.column_stack([x, y])
+    h = ConvexHull(pts)
+    v = pts[h.vertices]
+    return np.vstack([v, v[:1]])
+
+fig = plt.figure(figsize=(12.5, 9.5))
+gs  = fig.add_gridspec(2, 2, height_ratios=[1.0, 1.35], hspace=0.28, wspace=0.22)
+
+# (a) Abbe diagram
+ax1 = fig.add_subplot(gs[0, 0])
+ax1.scatter(_vd, _nd, s=12, alpha=0.55, color="steelblue", edgecolors="none")
+_h = _hull2d_xy(_vd, _nd)
+ax1.plot(_h[:, 0], _h[:, 1], color="crimson", lw=1.8, alpha=0.9)
 ax1.set_xlabel(r"$V_d$")
 ax1.set_ylabel(r"$n_d$")
-ax1.set_title(f"Glass map ({len(glasses)} glasses)")
+ax1.set_title(f"(a) Abbe diagram  ({len(glasses)} glasses)")
 ax1.grid(alpha=0.3)
 ax1.invert_xaxis()
 
-ax2.scatter(catalog["vd"], catalog["dPgF"], s=10, alpha=0.55,
-            color="seagreen", edgecolors="none")
-ax2.axhline(0, color="k", lw=0.5)
+# (b) ΔP_{g,F} vs V_d (Schott-normal-line deviation)
+ax2 = fig.add_subplot(gs[0, 1])
+ax2.scatter(_vd, _dPgF, s=12, alpha=0.55, color="seagreen", edgecolors="none")
+_h = _hull2d_xy(_vd, _dPgF)
+ax2.plot(_h[:, 0], _h[:, 1], color="crimson", lw=1.8, alpha=0.9)
+ax2.axhline(0.0,  color="k",       lw=0.6, ls="--", label="Schott normal line")
+ax2.axhline(0.03, color="dimgray", lw=0.6, ls=":",
+            label=r"FK threshold $\\Delta P_{g,F}=0.03$")
 ax2.set_xlabel(r"$V_d$")
 ax2.set_ylabel(r"$\\Delta P_{g,F}$")
-ax2.set_title(r"Partial dispersion anomaly vs $V_d$")
+ax2.set_title(r"(b) $\\Delta P_{g,F}$ vs $V_d$  (Schott-normal-line deviation)")
+ax2.legend(fontsize=8, loc="upper left")
 ax2.grid(alpha=0.3)
 ax2.invert_xaxis()
 
-plt.tight_layout()
+# (c) Full 3D feature space with convex hull
+ax3 = fig.add_subplot(gs[1, :], projection="3d")
+sc  = ax3.scatter(
+    _pts3[:, 0], _pts3[:, 1], _pts3[:, 2],  # pyright: ignore[reportArgumentType]
+    c=_dPgF, cmap="RdBu_r", s=14, alpha=0.85, edgecolors="none",
+)
+hull = ConvexHull(_pts3)
+faces = Poly3DCollection(
+    [_pts3[s] for s in hull.simplices],
+    alpha=0.08, facecolor="crimson",
+    edgecolor="crimson", linewidths=0.45,
+)
+ax3.add_collection3d(faces)
+ax3.set_xlabel(r"$V_d$")
+ax3.set_ylabel(r"$n_d$")
+ax3.set_zlabel(r"$\\Delta P_{g,F}$")
+ax3.invert_xaxis()
+ax3.view_init(elev=18, azim=-60)
+ax3.set_title(
+    r"(c) Full 3-D feature space $(V_d, n_d, \\Delta P_{g,F})$ "
+    r"with convex hull — training domain where the $(\\nu_3, \\nu_4)$ regression is valid"
+)
+cbar = fig.colorbar(sc, ax=ax3, shrink=0.55, pad=0.08)
+cbar.set_label(r"$\\Delta P_{g,F}$", fontsize=9)
+
+fig.suptitle(
+    r"Catalog footprint in $(V_d, n_d, \\Delta P_{g,F})$  —  "
+    r"panels (a)(b) are per-plane 2-D extents; (c) is the authoritative 3-D boundary",
+    y=0.995, fontsize=11,
+)
 plt.show()
+
+print(f"catalog: {len(glasses)} glasses  "
+      f"n_d ∈ [{_nd.min():.3f}, {_nd.max():.3f}], "
+      f"V_d ∈ [{_vd.min():.2f}, {_vd.max():.2f}], "
+      f"ΔP_g,F ∈ [{_dPgF.min():+.3f}, {_dPgF.max():+.3f}]")
+print(f"  FK cluster (ΔP_g,F > 0.03):     {(_dPgF > 0.03).sum()} glasses")
+print(f"  high-nd flint (n_d > 1.9):      {(_nd   > 1.9).sum()} glasses")
 """))
 
 
@@ -274,8 +352,9 @@ omega = buchdahl_omega(WAVELENGTHS)
 def bare_max(nu_arr):
     errs = np.zeros(N)
     for i in range(N):
+        nu_i = nu_arr[i]
         n_pred = reconstruct_n(
-            glasses[i]["nd"], *nu_arr[i], omega
+            glasses[i]["nd"], nu_i[0], nu_i[1], nu_i[2], nu_i[3], omega
         )
         errs[i] = np.abs(n_pred - glasses[i]["n_truth"]).max()
     return float(errs.max()), float(np.percentile(errs, 95))
@@ -455,7 +534,7 @@ print(f"Coarse sweep: {len(K_GRID)}×{len(ALPHA_COARSE)} = {len(results)} "
 cells.append(code(
 """# Plot 1 — a first look under p95 aggregation (placeholder; 3.2 shows it's not enough)
 fig, ax = plt.subplots(figsize=(8.5, 5.5))
-colors = plt.cm.viridis(np.linspace(0, 0.9, len(K_GRID)))
+colors = plt.get_cmap("viridis")(np.linspace(0, 0.9, len(K_GRID)))
 for c, K in zip(colors, K_GRID):
     ys = [np.percentile(results[(K, float(a))]["hold_max"], 95)
           for a in ALPHA_COARSE]
@@ -556,7 +635,6 @@ For K = 4, run Test B at each aggregation's α\\* and compare:
 cells.append(code(
 """# Bring in the cross-glass CV helper
 from dispersionlab.buchdahl import SCHOTT_NORMAL_A, SCHOTT_NORMAL_B
-from dispersionlab.sweep import build_anchor_matrices
 
 
 def test_b_cv(catalog, K, alpha, n_folds=5, seed=0):
@@ -580,7 +658,8 @@ def test_b_cv(catalog, K, alpha, n_folds=5, seed=0):
     nxt = cid.max() + 1
     for i, c in enumerate(cid):
         if c == -1:
-            cid[i] = nxt; nxt += 1
+            cid[i] = nxt
+            nxt += 1
     uniq = np.unique(cid)
     rng = np.random.default_rng(seed)
     perm = rng.permutation(uniq)
@@ -797,7 +876,7 @@ alternative named configurations.
 cells.append(md(
 """## Part 5 — α refinement at K = 4
 
-Part 4 settled `K = 4`. The coarse max-α\* sits at 1.92 (grid step =
+Part 4 settled `K = 4`. The coarse max-α\\* sits at 1.92 (grid step =
 0.08). This part does two things:
 
 1. **Fine sweep** around 1.92 with step = 0.02 to precisely locate the
@@ -833,7 +912,7 @@ for a in alpha_fine:
 
 alpha_fine_a_max = min(fine_rows, key=lambda x: x["testA_max"])
 alpha_fine_b_max = min(fine_rows, key=lambda x: x["testB_max_out"])
-print(f"Fine max-optimal α at K=4:")
+print("Fine max-optimal α at K=4:")
 print(f"  Test A max argmin: α = {alpha_fine_a_max['alpha']:.4f}  "
       f"(Test A max = {alpha_fine_a_max['testA_max']:.3e})")
 print(f"  Test B max argmin: α = {alpha_fine_b_max['alpha']:.4f}  "
@@ -896,7 +975,7 @@ make the Buchdahl coordinate ω symmetric around zero on the training
 wavelength band `[λ_min, λ_max]`. The condition
 `|ω(λ_min)| = ω(λ_max)` yields a closed form:
 
-$$\alpha^\star = \frac{(\lambda_{\max} - \lambda_d) - (\lambda_d - \lambda_{\min})}{2(\lambda_d - \lambda_{\min})(\lambda_{\max} - \lambda_d)}$$
+$$\\alpha^\\star = \\frac{(\\lambda_{\\max} - \\lambda_d) - (\\lambda_d - \\lambda_{\\min})}{2(\\lambda_d - \\lambda_{\\min})(\\lambda_{\\max} - \\lambda_d)}$$
 
 Substituting the project's `λ_d = 0.5876 μm` and the training grid
 `[λ_min = 0.365, λ_max = 2.3] μm`:
@@ -915,7 +994,7 @@ print(f"  a = λ_d − λ_min  = {a_arm:.6f}  μm")
 print(f"  b = λ_max − λ_d  = {b_arm:.6f}  μm")
 print(f"  α_band_sym       = (b − a) / (2ab) = {alpha_band_sym:.6f}")
 print()
-print(f"  Sanity check:")
+print("  Sanity check:")
 print(f"    |ω(λ_min)| = {abs(buchdahl_omega(lam_min, alpha_band_sym)):.6f}")
 print(f"     ω(λ_max)  = {buchdahl_omega(lam_max, alpha_band_sym):.6f}   (should match)")
 """))
@@ -945,8 +1024,8 @@ for label, a in candidates:
     print(f"  {label:<48} | {a:>7.4f} | {d:>+18.4f}")
 
 print()
-print(f"Fine grid step: 0.02   →  differences under ~0.02 are within a "
-      f"single step (statistically tied).")
+print("Fine grid step: 0.02   →  differences under ~0.02 are within a "
+      "single step (statistically tied).")
 """))
 
 
@@ -1086,7 +1165,7 @@ cv_prod = test_b_cv(catalog, K_prod, alpha_prod)
 in_nerr, out_nerr = cv_prod["in_nerr"], cv_prod["out_nerr"]
 
 print(f"(K, α) = ({K_prod}, {alpha_prod:.4f})  — error decomposition")
-print(f"all per-glass max |n_pred − n_Sellmeier| on 17-wavelength truth grid")
+print("all per-glass max |n_pred − n_Sellmeier| on 17-wavelength truth grid")
 print()
 print(f"  {'percentile':<10} | {'Oracle floor':>12} | {'prod in-fold':>12} "
       f"| {'prod out-fold':>13} | {'gap out-fold':>12}")
@@ -1100,7 +1179,9 @@ for p in (50, 95, 99):
     outf = _pct(out_nerr,   p)
     print(f"  p{p:<9} | {orc:>12.3e} | {inf:>12.3e} "
           f"| {outf:>13.3e} | {outf - orc:>12.3e}")
-orc_m = oracle_nerr.max(); inf_m = in_nerr.max(); outf_m = out_nerr.max()
+orc_m  = oracle_nerr.max()
+inf_m  = in_nerr.max()
+outf_m = out_nerr.max()
 print(f"  {'max':<10} | {orc_m:>12.3e} | {inf_m:>12.3e} "
       f"| {outf_m:>13.3e} | {outf_m - orc_m:>12.3e}")
 """))
@@ -1168,6 +1249,400 @@ This decomposition is the handoff to the rest of the project:
 **NB05 attacks the family floor, NB04 quantifies the regressor
 gap.** NB01 commits the production forward model and hands off the
 two improvement axes to downstream notebooks.
+
+Plot 6 and Plot 7 below localise *where in the catalog* the two
+error components concentrate.
+"""))
+
+
+# -------------------------------------------------------------------------
+# 6.2 — Plot 6: ν₃/ν₄ Level-2 residual map
+# -------------------------------------------------------------------------
+
+cells.append(code(
+"""# Plot 6 — Level-2 coefficient residuals, not direct optical error
+# The production regressor predicts (ν₃, ν₄) linearly from the 20-D
+# feature map of (n_d, V_d, ΔP_{g,F}). Scatter of (Oracle ν − predicted ν)
+# over the catalog reveals which corners the 3-parameter map struggles to
+# reproduce. These coefficient residuals only matter insofar as they
+# propagate to off-anchor reconstruction error (Plot 7).
+reg = np.load("../data/regression_buchdahl_anchor_nu34_20dim_opt.npy")  # (20, 2)
+
+# Full-catalog feature matrix (uses catalog arrays already in scope)
+Phi_all = np.array([
+    feature_vec_20(catalog["nd"][i], catalog["vd"][i], catalog["dPgF"][i])
+    for i in range(len(catalog["nd"]))
+])
+nu_high_oracle = nu_oracle[:, 2:]            # (N, 2)
+nu_high_pred   = Phi_all @ reg               # (N, 2)
+resid_nu       = nu_high_oracle - nu_high_pred   # (N, 2)
+
+def _sym_lim(a):
+    m = float(np.max(np.abs(a)))
+    return (-m, m)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+for k, (ax, col) in enumerate(zip(axes, ["ν₃ residual", "ν₄ residual"])):
+    vlim = _sym_lim(resid_nu[:, k])
+    sc = ax.scatter(
+        catalog["vd"], catalog["nd"],
+        c=resid_nu[:, k], cmap="RdBu_r",
+        vmin=vlim[0], vmax=vlim[1],
+        s=14, alpha=0.75, edgecolors="none",
+    )
+    fk_mask = catalog["dPgF"] > 0.03
+    flint_mask = catalog["nd"] > 1.9
+    ax.scatter(catalog["vd"][fk_mask], catalog["nd"][fk_mask],
+               s=40, facecolors="none", edgecolors="black", lw=0.8,
+               label="FK cluster (ΔP_{g,F} > 0.03)")
+    ax.scatter(catalog["vd"][flint_mask], catalog["nd"][flint_mask],
+               s=40, facecolors="none", edgecolors="dimgray", lw=0.8,
+               label="high-nd flint (n_d > 1.9)")
+    ax.set_xlabel(r"$V_d$")
+    ax.invert_xaxis()
+    if k == 0:
+        ax.set_ylabel(r"$n_d$")
+    ax.set_title(f"Level-2 {col}  (Oracle − 20-D regressor pred)")
+    ax.grid(alpha=0.3)
+    plt.colorbar(sc, ax=ax, shrink=0.85)
+axes[0].legend(fontsize=8, loc="lower left")
+plt.tight_layout()
+plt.show()
+
+print(f"ν₃ residual std = {resid_nu[:, 0].std():.3e}, "
+      f"range = [{resid_nu[:, 0].min():.3e}, {resid_nu[:, 0].max():.3e}]")
+print(f"ν₄ residual std = {resid_nu[:, 1].std():.3e}, "
+      f"range = [{resid_nu[:, 1].min():.3e}, {resid_nu[:, 1].max():.3e}]")
+"""))
+
+
+cells.append(md(
+"""### 6.2 Where the regressor gap concentrates
+
+Plot 6 is a **regressor diagnostic, not a direct optical error
+plot**. The colour is residual in the Level-2 coefficient space
+`(ν₃, ν₄)` — not `|Δn|` at any wavelength. A large Level-2
+residual becomes an optical error only after propagation through
+`Φ_k(ω) = ω^k − ω·B_{1,k-3} − ω²·B_{2,k-3}` at the evaluation
+wavelengths, and part of it is absorbed by the anchor-preserving
+coupling `[ν₁, ν₂] = a − B·[ν₃, ν₄]`. Plot 7 gives the propagated
+view.
+
+What the two panels show:
+
+- **Structured, signed residuals.** Both panels show coherent
+  red / blue lobes rather than scatter noise — the 3-parameter
+  feature map misses systematic high-order information. This is
+  the same signal that NB04's Level-2 ablation reads as
+  "a more expressive regressor does not close the gap": the
+  missing signal is not inside the `(n_d, V_d, ΔP_{g,F})` span,
+  it is outside it.
+- **Extreme coefficient residuals sit on sparse corners.** The
+  deepest red / blue lies in the **FK cluster**
+  (high `V_d`, positive `ΔP_{g,F}`) and the **high-`n_d`
+  flint band** — the two regions where the linear regressor has
+  fewest nearest neighbours in feature space. Note that large
+  Level-2 residual does not automatically imply large optical
+  error; the anchor-preserving construction rebuilds
+  `(ν₁, ν₂)` consistently with the predicted `(ν₃, ν₄)`, so
+  the propagated impact depends on basis `Φ_k(ω)` magnitudes at
+  each wavelength. This is exactly why Plot 7 is needed.
+"""))
+
+
+# -------------------------------------------------------------------------
+# 6.3 — Plot 7: end-to-end design-space error map
+# -------------------------------------------------------------------------
+
+cells.append(code(
+"""# Plot 7 — end-to-end reconstruction error across the design space.
+# Colour = log10( per-glass max |n_pred − n_Sellmeier| ) on the
+# 17-wavelength truth grid, out-of-fold from cluster CV (one error per
+# glass, aligned with catalog index — test_b_cv's out_nerr is in fold
+# concatenation order so we redo the CV here to keep per-glass alignment).
+from sklearn.cluster import DBSCAN as _DBSCAN
+from sklearn.preprocessing import StandardScaler as _StdScaler
+
+N = len(catalog["nd"])
+err_per_glass = np.full(N, np.nan)
+Xs = _StdScaler().fit_transform(
+    np.column_stack([catalog["nd"], catalog["vd"], catalog["dPgF"]])
+)
+_cid = _DBSCAN(eps=0.15, min_samples=2).fit(Xs).labels_.copy()
+_nxt = _cid.max() + 1
+for _i, _c in enumerate(_cid):
+    if _c == -1:
+        _cid[_i] = _nxt
+        _nxt += 1
+_rng = np.random.default_rng(0)
+_folds = np.array_split(_rng.permutation(np.unique(_cid)), 5)
+
+for _fk in range(5):
+    _test_set = set(_folds[_fk].tolist())
+    _test_mask = np.array([c in _test_set for c in _cid])
+    _train_mask = ~_test_mask
+    _A, *_ = np.linalg.lstsq(Phi_all[_train_mask], nu_high_oracle[_train_mask], rcond=None)
+    _pred_high = Phi_all[_test_mask] @ _A
+    _nd_s = catalog["nd"][_test_mask]
+    _vd_s = catalog["vd"][_test_mask]
+    _dPgF_s = catalog["dPgF"][_test_mask]
+    _dn_FC = (_nd_s - 1.0) / _vd_s
+    from dispersionlab.buchdahl import SCHOTT_NORMAL_A as _SA, SCHOTT_NORMAL_B as _SB
+    _PgF = _SA - _SB * _vd_s + _dPgF_s
+    _dn_gF = _PgF * _dn_FC
+    _, _, _M_INV, _B_COUP = build_anchor_matrices(alpha_prod, K_prod)
+    _a_vec = _M_INV @ np.stack([_dn_FC, _dn_gF])
+    _delta = _B_COUP @ _pred_high.T
+    _nu1, _nu2 = _a_vec[0] - _delta[0], _a_vec[1] - _delta[1]
+    _n_pred = (_nd_s[:, None]
+               + _nu1[:, None] * omega_prod[None, :]
+               + _nu2[:, None] * omega_prod[None, :] ** 2)
+    for _kk in range(3, K_prod + 1):
+        _j = _kk - 3
+        _n_pred = _n_pred + _pred_high[:, _j:_j+1] * omega_prod[None, :] ** _kk
+    err_per_glass[_test_mask] = np.abs(
+        _n_pred - catalog["n_truth"][_test_mask]
+    ).max(axis=1)
+
+assert not np.any(np.isnan(err_per_glass)), "some glasses never appeared in test folds"
+err = err_per_glass
+log_err = np.log10(err)
+
+fig, ax = plt.subplots(figsize=(8.5, 5.2))
+sc = ax.scatter(
+    catalog["vd"], catalog["nd"],
+    c=log_err, cmap="viridis",
+    s=18, alpha=0.85, edgecolors="none",
+)
+cb = plt.colorbar(sc, ax=ax, shrink=0.9)
+cb.set_label(r"$\\log_{10}\\,\\max_\\lambda |n_{\\rm pred}(\\lambda) - n_{\\rm Sellmeier}(\\lambda)|$")
+
+# Overlay guides for Part 6.2's two extrapolative corners
+fk_mask    = catalog["dPgF"] > 0.03
+flint_mask = catalog["nd"]   > 1.9
+ax.scatter(catalog["vd"][fk_mask], catalog["nd"][fk_mask],
+           s=55, facecolors="none", edgecolors="crimson", lw=1.1,
+           label="FK cluster")
+ax.scatter(catalog["vd"][flint_mask], catalog["nd"][flint_mask],
+           s=55, facecolors="none", edgecolors="darkorange", lw=1.1,
+           label="high-nd flint")
+
+ax.set_xlabel(r"$V_d$")
+ax.set_ylabel(r"$n_d$")
+ax.invert_xaxis()
+ax.set_title(r"Production end-to-end $n(\\lambda)$ error across the $(V_d, n_d)$ plane")
+ax.legend(loc="upper left", fontsize=9)
+ax.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# Quantify corner vs interior — median / p95 / max
+central = ~(fk_mask | flint_mask)
+print(f"per-glass max |Δn|   {'median':>10} {'p95':>10} {'max':>10}")
+for lbl, m in [
+    ("overall",          np.ones_like(fk_mask)),
+    ("central interior", central),
+    ("FK cluster",       fk_mask),
+    ("high-nd flint",    flint_mask),
+]:
+    e = err[m]
+    if len(e) == 0:
+        continue
+    print(f"  {lbl:<18} "
+          f"n={m.sum():>3d}  "
+          f"{np.median(e):.2e} {np.percentile(e, 95):.2e} {np.max(e):.2e}")
+"""))
+
+
+cells.append(md(
+"""### 6.3 Where production is reliable vs extrapolative
+
+Plot 7 is the **propagated** view of Plot 6: the two sparse
+corners that lit up in Level-2 coefficient space reappear in
+optical `|Δn|` — but with nuance:
+
+- **Central interior (≈ 508 glasses, most of the catalog)**:
+  `|Δn|` median ≈ 2.7·10⁻³, p95 ≈ 4.2·10⁻³, max ≈ 7.0·10⁻³.
+  This is the **region where the production surrogate is least
+  likely to dominate downstream uncertainty** — its contribution
+  to a tolerance budget (NB03 J·Σ·Jᵀ) or an apo-doublet Conrady
+  estimate (NB02) typically stays below the surface-curvature and
+  parameter-covariance terms.
+- **High-`n_d` flint band (≈ 15 glasses)**: consistently worse
+  than the interior on median **and** p95 **and** max. The
+  feature map genuinely struggles in this corner, and every
+  percentile shows it.
+- **FK cluster (≈ 24 glasses)**: **bimodal**. The median is
+  actually *below* the interior (most FKs are well-fit), but the
+  tail is heavier — p95 ≈ 6.1·10⁻³ and the worst-case catalog
+  glass sits here. Apochromatic designs routinely rely on FK
+  glasses, so the tail matters even though the median is
+  favourable.
+
+The exact "reliable vs extrapolative" threshold is task-dependent.
+NB03's tolerance analysis cares about local derivatives and anchor
+structure more than about `max |Δn|`; NB02's secondary-spectrum
+ordering cares only about anchor-line indices (architecturally
+exact). Plot 7 is a **screening map** — the designer should use
+it to flag candidate substitutions that land in the FK / flint
+tails for a direct Sellmeier cross-check, not as a binary safe /
+unsafe boundary.
+
+Together, Plots 5–7 complete Part 6: **5** gives the error
+budget as CDFs, **6** is a Level-2 regressor diagnostic,
+**7** locates the propagated error on the design space.
+"""))
+
+
+# -------------------------------------------------------------------------
+# 6.4 — Short appendix: why not a generic polynomial basis?
+# -------------------------------------------------------------------------
+
+cells.append(md(
+"""### 6.4 Why not a generic polynomial basis? (short cross-check)
+
+A reasonable question once Buchdahl is fixed at K = 4 is whether a
+generic polynomial basis — Chebyshev being the textbook choice on a
+closed wavelength interval — could play the same role. Chebyshev is
+strictly stronger as a **per-glass function approximator** (quasi-best
+uniform approximation on a closed interval; its per-glass residual is
+lower than Buchdahl's at matched degree). The question is not
+approximation capacity, it is whether the basis' coefficients are the
+right **production coordinate** for a three-descriptor surrogate.
+
+We check two things a production basis has to deliver that Chebyshev
+does not provide by construction:
+
+1. **Stable linear regression from `(n_d, V_d, ΔP_{g,F})`.** Buchdahl's
+   `(ν₃, ν₄)` are physically close to "leftover anomalous-dispersion
+   shape" that the partial-dispersion descriptor already encodes.
+   Chebyshev coefficients are functions of the truth curve and have
+   no a-priori link to the catalog descriptors.
+2. **Anchor semantics.** Buchdahl's anchor-preserving construction
+   keeps `n(λ_d) = n_d`, `V_d`, and `P_{g,F}` exact for any
+   high-order prediction (Part 1). Chebyshev has no such property;
+   `V_d` and `P_{g,F}` implied by the predicted curve can drift.
+"""))
+
+
+cells.append(code(
+"""# Chebyshev cross-check at matched protocol:
+# - per-glass fit at degree 8 (9 coefs — comparable free-parameter count
+#   to Buchdahl K = 4 per-glass LSQ at 17 wavelengths)
+# - 20-D linear regression of the 9 coefficients from
+#   (n_d, V_d, ΔP_{g,F}) on the same cluster CV split as Part 6
+# - report anchor slip (implied V_d / P_{g,F} vs catalog value)
+from numpy.polynomial.chebyshev import chebfit, chebval
+
+LAM_MIN = WAVELENGTHS.min()
+LAM_MAX = WAVELENGTHS.max()
+def _lam_to_x(lam):
+    return 2.0 * (lam - LAM_MIN) / (LAM_MAX - LAM_MIN) - 1.0
+X_WL = _lam_to_x(WAVELENGTHS)
+X_d  = _lam_to_x(LAMBDA_D)
+X_F  = _lam_to_x(LAMBDA_F)
+X_C  = _lam_to_x(LAMBDA_C)
+X_g  = _lam_to_x(LAMBDA_g)
+
+DEG = 8
+N = len(catalog["nd"])
+
+# Per-glass Chebyshev fit (fit layer)
+cheb_coefs = np.zeros((N, DEG + 1))
+for i in range(N):
+    cheb_coefs[i] = chebfit(X_WL, catalog["n_truth"][i], DEG)
+fit_recon = np.array([chebval(X_WL, cheb_coefs[i]) for i in range(N)])
+fit_err   = np.abs(fit_recon - catalog["n_truth"]).max(axis=1)
+
+# Cluster-CV regression (same folds as Part 6.3 via _cid/_folds)
+e2e_err_cheb = np.full(N, np.nan)
+Vd_slip      = np.full(N, np.nan)
+PgF_slip     = np.full(N, np.nan)
+for _fk in range(5):
+    _test_set  = set(_folds[_fk].tolist())
+    _test_mask = np.array([c in _test_set for c in _cid])
+    A_cheb, *_ = np.linalg.lstsq(
+        Phi_all[~_test_mask], cheb_coefs[~_test_mask], rcond=None
+    )
+    pred_coefs = Phi_all[_test_mask] @ A_cheb
+    n_rec = np.array([chebval(X_WL, pred_coefs[j]) for j in range(len(pred_coefs))])
+    e2e_err_cheb[_test_mask] = np.abs(n_rec - catalog["n_truth"][_test_mask]).max(axis=1)
+
+    # anchor slip from predicted Chebyshev curve
+    n_d_c = np.array([chebval(X_d, pc) for pc in pred_coefs])
+    n_F_c = np.array([chebval(X_F, pc) for pc in pred_coefs])
+    n_C_c = np.array([chebval(X_C, pc) for pc in pred_coefs])
+    n_g_c = np.array([chebval(X_g, pc) for pc in pred_coefs])
+    Vd_implied  = (n_d_c - 1.0) / (n_F_c - n_C_c)
+    PgF_implied = (n_g_c - n_F_c) / (n_F_c - n_C_c)
+    Vd_slip[_test_mask]  = np.abs(Vd_implied  - catalog["vd"][_test_mask])
+    PgF_slip[_test_mask] = np.abs(PgF_implied - (
+        SCHOTT_NORMAL_A - SCHOTT_NORMAL_B * catalog["vd"][_test_mask]
+        + catalog["dPgF"][_test_mask]
+    ))
+
+# Buchdahl side uses err_per_glass from Plot 7 (same CV split)
+print("Buchdahl production (K=4, α=1.9547) vs Chebyshev (deg 8, 9 coefs)")
+print("same 5-fold cluster CV, same 20-D linear regressor")
+print()
+print(f"  {'':<34} {'Buchdahl':>12}  {'Chebyshev':>12}")
+print(f"  {'-'*34} {'-'*12}  {'-'*12}")
+print(f"  per-glass fit-layer max (p95)      "
+      f"{np.percentile(oracle_nerr, 95):>12.2e}  "
+      f"{np.percentile(fit_err, 95):>12.2e}")
+print(f"  end-to-end |Δn| out-of-fold (p95)  "
+      f"{np.percentile(err_per_glass, 95):>12.2e}  "
+      f"{np.percentile(e2e_err_cheb, 95):>12.2e}")
+print(f"  end-to-end |Δn| out-of-fold (max)  "
+      f"{err_per_glass.max():>12.2e}  "
+      f"{e2e_err_cheb.max():>12.2e}")
+print(f"  V_d slip out-of-fold   (p95)       "
+      f"{0.0:>12.2e}  {np.nanpercentile(Vd_slip, 95):>12.2e}")
+print(f"  V_d slip out-of-fold   (max)       "
+      f"{0.0:>12.2e}  {np.nanmax(Vd_slip):>12.2e}")
+print(f"  ΔP_g,F slip out-of-fold (p95)      "
+      f"{0.0:>12.2e}  {np.nanpercentile(PgF_slip, 95):>12.2e}")
+print(f"  ΔP_g,F slip out-of-fold (max)      "
+      f"{0.0:>12.2e}  {np.nanmax(PgF_slip):>12.2e}")
+print()
+print("Chebyshev anchor slip is 0 by construction only at the "
+      "per-glass fit layer; under 20-D → 9-coef regression, the "
+      "predicted curve deviates from the catalog V_d / P_g,F.")
+"""))
+
+
+cells.append(md(
+"""The cross-check (numbers above) is more nuanced than a blanket
+"Chebyshev fails":
+
+- **Fit-layer (Chebyshev per-glass)**: Chebyshev at degree 8 has ~10×
+  smaller per-glass residual than the Buchdahl K = 4 Oracle
+  (~3.2·10⁻⁴ vs ~3.1·10⁻³ at p95) — the expected consequence of
+  near-best uniform approximation on a closed interval. Chebyshev
+  **is** the stronger approximation basis.
+- **End-to-end `n(λ)` (out-of-fold)**: 20-D linear regression of
+  Chebyshev's 9 coefficients actually matches or slightly **beats**
+  Buchdahl on the typical glass (p95 ≈ 2.4·10⁻³ vs 4.5·10⁻³); the
+  worst-case `max |Δn|` is essentially tied (~7.7–7.8·10⁻³). So the
+  3-parameter feature map can regress Chebyshev coefficients well
+  enough to keep optical error competitive. The argument against
+  Chebyshev **is not** "regression fails".
+- **Anchor slip — the real failure mode.** Buchdahl has zero `V_d` /
+  `P_{g,F}` slip by construction. Chebyshev's regressed curve drifts
+  on both: `|ΔV_d|` p95 ≈ 1.5 Abbe units, **max ≈ 23** (a catalog
+  `V_d` of 40 could be read as 17); `|ΔP_{g,F}|` p95 ≈ 1.8·10⁻²,
+  **max ≈ 5.0·10⁻²**, large enough to flip a glass in and out of
+  the `ΔP_{g,F} > 0.03` FK bin. Everything downstream of
+  `(n_d, V_d, ΔP_{g,F})` semantics — apo-doublet `S` ordering
+  (NB02), anchor-line Conrady estimates, glass-catalog substitution
+  searches — breaks on these slips, not on the `n(λ)` residual.
+
+Net: Chebyshev is a strong per-glass approximation basis, but it is
+not the right **production coordinate** for a three-descriptor glass
+surrogate unless one adds explicit anchor constraints and a stable
+coefficient predictor on top of it. Buchdahl's anchor-preserving
+construction gives both for free — **that**, not the raw `n(λ)`
+residual, is why the production forward model sits here.
 """))
 
 
@@ -1224,6 +1699,37 @@ The empirical cost of the switch is small: Test B p95 degrades by
 α = 1.9547), below the design budget of every downstream task in
 NB02–NB05.
 
+### Downstream handoff (from Part 6)
+
+Part 6 decomposes the remaining production error and locates it on
+the design space. Two axes for improvement are handed to later
+notebooks:
+
+- **Regressor gap → NB04.** Plot 6 shows structured (not noisy)
+  coefficient-space residual on the FK cluster and high-`n_d`
+  flint. NB04's Level-2 ablation (linear 20-D vs MLP vs Oracle)
+  quantifies how much of this gap extra regressor capacity
+  recovers, and returns a clean negative result: the missing
+  signal is not inside the 3-parameter span, so feature
+  engineering rather than model capacity is the remaining lever.
+- **Family floor → NB05.** Plot 5 shows the K = 4 Oracle floor
+  dominates p50 / p95 reconstruction error. NB05's Phase 2
+  structural residual `ε·q(λ)·tanh(NN)` adds off-anchor capacity
+  that stays exact at the four anchor wavelengths by construction,
+  cutting H3 RMS below the K = 4 family ceiling at the
+  recommended `ε_scale = 10⁻²`.
+
+Part 6's Plot 7 is the screening map: designers should read it
+before trusting the forward model on a specific FK / high-`n_d`
+substitution.
+
+Part 6.4 records a Chebyshev cross-check at matched protocol:
+Chebyshev is a stronger per-glass approximation basis, but
+`V_d` / `P_{g,F}` slip on 20-D regression (up to ~23 Abbe units
+and ~0.05 on the worst glass) disqualifies it as the production
+coordinate. Buchdahl is selected for **anchor semantics**, not
+for raw `n(λ)` approximation quality.
+
 ### Principled candidates recorded for reference (Part 5.1)
 
 Five α derivations were evaluated. Only A was adopted:
@@ -1262,8 +1768,11 @@ Production migrated from α = 1.818 to α = 1.9547:
    changes.
 4. README and report updated to α = 1.9547 throughout.
 
-`01_legacy_reference.ipynb` retains the historical α = 1.818 sweep
-for archival purposes.
+The legacy-construction analysis (V_d slip ~1.14 units, anchor
+miss) is now inside Part 1 as a one-table contrast against the
+anchor-preserving construction, not a separate archival notebook.
+NB01 is the single authoritative notebook for the production
+forward model.
 """))
 
 

@@ -1,9 +1,18 @@
 """Build 04_neural_buchdahl_phase1.ipynb.
 
-Coefficient-predictor ablation under the anchor-preserving Buchdahl
-model (K = 4, α = 1.818). Canonical derivation of the two construction
-orders lives in §1.4 of the report; this notebook quantifies the
-downstream consequences.
+Coefficient-predictor ablation comparing legacy-construction vs
+anchor-preserving forward models. The notebook is a **legacy-contrast
+analysis** pinned at the historical `(K = 4, α = 1.818)` baseline: it
+loads the pre-migration regression artifact
+``data/regression_buchdahl_nu34_20dim_opt.npy`` (trained under legacy
+construction at α = 1.818) as variant A and compares it against the
+anchor-preserving construction at the same `(K, α)`. The canonical
+production forward model consumed by NB02 / NB03 / NB05 is at
+`(K = 4, α = 1.9547)` — see `dispersionlab.buchdahl.ALPHA` and NB01
+Part 5.1 for the band-symmetric derivation. NB04 does **not** switch
+to 1.9547 because its question is construction-order contrast at a
+fixed historical α, and re-aligning α would break the pairing with
+the legacy artifact.
 
 Two questions:
 
@@ -157,7 +166,11 @@ LAMBDA_D = 0.5875618
 LAMBDA_g = 0.4358343
 LAMBDA_F = 0.4861327
 LAMBDA_C = 0.6562725
-ALPHA    = 1.818          # optimized in model_glass_buchdahl.ipynb
+ALPHA    = 1.818          # legacy-contrast baseline; paired with
+                          # regression_buchdahl_nu34_20dim_opt.npy (pre-
+                          # migration artifact). Production elsewhere in
+                          # the project uses dispersionlab.buchdahl.ALPHA
+                          # = 1.9547 (band-symmetric, NB01 Part 5.1).
 
 def buchdahl_omega(lam, alpha=ALPHA):
     dl = lam - LAMBDA_D

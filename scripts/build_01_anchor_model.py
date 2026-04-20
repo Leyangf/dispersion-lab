@@ -1,8 +1,9 @@
 """Anchor-preserving Buchdahl **accuracy-frontier sweep** (diagnostic).
 
 This script is **not** the production-artifact generator. The production
-baseline is K = 4, α = 1.818, shipped via
-``scripts/build_anchor_dataset.py`` and consumed by NB02/NB03/NB05.
+baseline is K = 4, α = 1.9547 (band-symmetric, see NB01 Part 5), shipped
+via ``scripts/build_anchor_dataset.py`` and consumed by NB02/NB03/NB04/
+NB05.
 
 Purpose of this sweep: identify the (K, α) point that minimises p95
 absolute Test A wavelength-holdout error under the anchor-preserving
@@ -69,9 +70,10 @@ ALPHA_COARSE = np.linspace(1.2, 2.8, 21)       # step 0.08
 ALPHA_FINE_WIDTH = 0.08                        # ±width around coarse winner
 ALPHA_FINE_STEPS = 9                           # 9 fine points spanning width
 
-# Production baseline (kept fixed independently of this sweep)
+# Production baseline (kept fixed independently of this sweep;
+# band-symmetric derivation — see NB01 Part 5.1).
 K_PROD = 4
-ALPHA_PROD = 1.818
+ALPHA_PROD = 1.9547
 
 
 # =====================================================================
