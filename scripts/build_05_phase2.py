@@ -1,19 +1,19 @@
-"""Build neural_buchdahl_phase2.ipynb.
+"""Build 05_neural_buchdahl_phase2.ipynb.
 
-Phase 2 of the Neural Extension of Buchdahl: **bounded envelope residual
-correction** on top of the Phase 1 anchor-preserving baseline (variant C).
+Bounded envelope residual correction on top of the anchor-preserving
+Buchdahl baseline canonized in the shared ``dispersionlab`` module.
 
 Architecture:
 
-    n_total(lambda) = n_C(lambda) + eps_scale * q_norm(x(lambda))
+    n_total(lambda) = n_base(lambda) + eps_scale * q_norm(x(lambda))
                       * tanh(NN(nd_norm, Vd_norm, dPgF_norm, x))
 
-with q_norm vanishing at d/F/C/g (so anchors are architecturally
-preserved — Claim F/G invariant to Phase 2).
+with q_norm vanishing at d/F/C/g — so the (nd, Vd, dPgF) anchors are
+architecturally invariant to Phase 2 at machine precision.
 
 Central question:
 
-    Is the Phase 1 residual floor dominated by
+    Is the anchor-preserving 4-term floor dominated by
       (i) the 4-term Buchdahl truncation (attackable by residual NN), or
       (ii) the 3-parameter input bottleneck (same (nd, Vd, dPgF) maps to
            one n(lambda) curve regardless of Sellmeier shape)?
@@ -55,21 +55,28 @@ def code(source):
 cells = []
 
 cells.append(md(
-"""# Phase 2 — Bounded Envelope Residual Correction
+"""# Bounded Envelope Residual Correction
 
-Continuing from `neural_buchdahl.ipynb` (Part 1), where we established:
+Building on the anchor-preserving Buchdahl baseline canonized in the
+shared `dispersionlab` module — same `feature_vec_20` +
+`solve_nu12_from_nu34` + `fit_anchor_preserving_coefficients` primitives
+that NB02 and NB03 consume, and the same anchor invariant verified at
+floating-point precision in `tests/test_anchor_delta.py`.
 
-- **Anchor-preserving repair** (variant C) fixes physical consistency
-  and improves downstream apo-doublet agreement with Sellmeier truth
-  (Claim G: median $|\\Delta S|$ 12 μm → 1.5 μm).
-- **Neural ν3, ν4 (variant D)** adds nothing over linear C at $N = 544$
-  glasses with 3-d input.
-- The **residual ~1.5 μm** is consistent with the **Oracle** upper bound
-  — i.e. the **4-term anchor-preserving Buchdahl floor** at the
-  Level-1 spectral-fit target.
+Facts the baseline already provides:
 
-Phase 2 asks whether the residual floor can be pushed lower by **adding
-a neural correction that lives inside the same anchor constraints**.
+- **Anchor preservation** is a structural property of the forward model:
+  the output curve's implied $(n_d, V_d, \\Delta P_{g,F})$ equal the
+  input at machine precision by construction, for any $(\\nu_3, \\nu_4)$.
+- **Neural $(\\nu_3, \\nu_4)$** (Notebook 04 variant D) adds nothing over
+  the 20-D linear predictor at $N = 544$ glasses with a 3-d input —
+  the cross-glass map is already saturated.
+- The remaining per-glass reconstruction residual is a property of the
+  4-term Buchdahl family under the anchor-preserving Level-1 target
+  (Oracle upper bound), not of predictor capacity.
+
+Phase 2 asks whether this floor can be pushed lower by **adding a
+neural correction that lives inside the same anchor constraints**.
 
 ## Architecture
 
@@ -139,13 +146,9 @@ cells.append(code(
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-from pathlib import Path
-import importlib.util
-import re
 import time
 
 import numpy as np
-import yaml
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch
@@ -161,31 +164,27 @@ print(f"numpy {np.__version__}, torch {torch.__version__}, pandas {pd.__version_
 """))
 
 cells.append(code(
-"""# Buchdahl constants — identical to the other notebooks.
-LAMBDA_D = 0.5875618
-LAMBDA_g = 0.4358343
-LAMBDA_F = 0.4861327
-LAMBDA_C = 0.6562725
-ALPHA    = 1.818
+"""# ---- Shared Buchdahl primitives via dispersionlab ----
+#
+# Feature map, anchor coupling solve, per-glass constrained LSQ, and the
+# spectral-line/alpha constants all come from the shared package —
+# identical math to NB02, NB03, NB04, and the anchor-preservation tests.
 
+from dispersionlab import (
+    LAMBDA_D, LAMBDA_F, LAMBDA_C, LAMBDA_g,
+    ALPHA,
+    buchdahl_omega,
+    feature_vec_20 as feature_vec,
+    solve_nu12_from_nu34,
+    fit_anchor_preserving_coefficients,
+    M_INV, B_COUP,
+)
+from dispersionlab.catalog import load_glass_catalog, sellmeier_formula_2
 
-def buchdahl_omega(lam, alpha=ALPHA):
-    dl = lam - LAMBDA_D
-    return dl / (1.0 + alpha * dl)
-
-
-OMEGA_g = buchdahl_omega(LAMBDA_g)
-OMEGA_F = buchdahl_omega(LAMBDA_F)
-OMEGA_C = buchdahl_omega(LAMBDA_C)
-
-# Training support
+# Training support + Phase-2 specific evaluation grids
 LAM_LO, LAM_HI = 0.365, 2.3
 ANCHORS = np.array([LAMBDA_D, LAMBDA_F, LAMBDA_C, LAMBDA_g])
-
-# Pool of 2048 wavelengths for random training sampling
 LAM_POOL = np.linspace(LAM_LO, LAM_HI, 2048)
-
-# Fixed evaluation grids
 LAM_H1 = np.array([
     0.36501, 0.40466, 0.43583, 0.48613, 0.54607,
     0.58756, 0.58929, 0.6328,  0.64385, 0.65627,
@@ -194,75 +193,17 @@ LAM_H1 = np.array([
 ])
 LAM_H2 = np.linspace(0.400, 0.700, 200)
 LAM_H3 = np.linspace(LAM_LO, LAM_HI, 500)
-
-# Optiland glass DB
-if "OPTILAND_DB_ROOT" in os.environ:
-    DB_ROOT = Path(os.environ["OPTILAND_DB_ROOT"])
-else:
-    _spec = importlib.util.find_spec("optiland")
-    if _spec is None or _spec.origin is None:
-        raise RuntimeError("optiland not installed")
-    DB_ROOT = Path(_spec.origin).parent / "database"
-GLASS_ROOT = DB_ROOT / "data-nk" / "glass"
-print(f"Glass DB: {GLASS_ROOT}")
 """))
 
 cells.append(code(
-"""# ---- Glass loader + cache Sellmeier at all evaluation wavelengths ----
-def _sellmeier(lam, sm):
-    B1, C1, B2, C2, B3, C3 = sm
-    wl2 = lam ** 2
-    return np.sqrt(1 + B1*wl2/(wl2-C1) + B2*wl2/(wl2-C2) + B3*wl2/(wl2-C3))
-
-
-def extract_record(yml_path):
-    with yml_path.open("r", encoding="utf-8") as f:
-        doc = yaml.safe_load(f)
-    data_blocks = doc.get("DATA", [])
-    if not data_blocks:
-        return None
-    formula = data_blocks[0]
-    if formula.get("type") != "formula 2":
-        return None
-    coeffs = formula.get("coefficients", "").split()
-    if len(coeffs) != 7:
-        return None
-    wr = formula.get("wavelength_range", "").split()
-    if len(wr) != 2:
-        return None
-    B1, C1 = float(coeffs[1]), float(coeffs[2])
-    B2, C2 = float(coeffs[3]), float(coeffs[4])
-    B3, C3 = float(coeffs[5]), float(coeffs[6])
-    lam_lo, lam_hi = float(wr[0]), float(wr[1])
-    if lam_lo > LAM_LO + 1e-6 or lam_hi < LAM_HI - 1e-6:
-        return None
-    sm = (B1, C1, B2, C2, B3, C3)
-    nd = float(_sellmeier(LAMBDA_D, sm))
-    nF = float(_sellmeier(LAMBDA_F, sm))
-    nC = float(_sellmeier(LAMBDA_C, sm))
-    ng = float(_sellmeier(LAMBDA_g, sm))
-    dn_FC = nF - nC
-    if dn_FC < 1e-12:
-        return None
-    vd   = (nd - 1.0) / dn_FC
-    PgF  = (ng - nF) / dn_FC
-    dPgF = PgF - (0.6438 - 0.001682 * vd)
-    return dict(
-        name=yml_path.stem, catalog=yml_path.parent.name,
-        nd=nd, vd=vd, PgF=PgF, dPgF=dPgF, sellmeier=sm,
-        n_H1   = np.array([_sellmeier(lam, sm) for lam in LAM_H1]),
-        n_H2   = np.array([_sellmeier(lam, sm) for lam in LAM_H2]),
-        n_H3   = np.array([_sellmeier(lam, sm) for lam in LAM_H3]),
-        n_pool = np.array([_sellmeier(lam, sm) for lam in LAM_POOL]),
-    )
-
-
-glasses = []
-for yml in GLASS_ROOT.rglob("*.yml"):
-    rec = extract_record(yml)
-    if rec is not None:
-        glasses.append(rec)
-glasses = [g for g in glasses if 10 < g["vd"] < 100 and -0.02 < g["dPgF"] < 0.10]
+"""# ---- Glass catalog + precompute Sellmeier truth on Phase-2 grids ----
+glasses = load_glass_catalog()
+for g in glasses:
+    sm = g["sellmeier"]
+    g["n_H1"]   = g.pop("n_truth")   # NB05 names it H1; identical 17-pt grid
+    g["n_H2"]   = np.array([float(sellmeier_formula_2(lam, sm)) for lam in LAM_H2])
+    g["n_H3"]   = np.array([float(sellmeier_formula_2(lam, sm)) for lam in LAM_H3])
+    g["n_pool"] = np.array([float(sellmeier_formula_2(lam, sm)) for lam in LAM_POOL])
 N_GLASS = len(glasses)
 print(f"Loaded {N_GLASS} glasses with Sellmeier + pre-computed H1/H2/H3/pool grids.")
 """))
@@ -272,59 +213,34 @@ print(f"Loaded {N_GLASS} glasses with Sellmeier + pre-computed H1/H2/H3/pool gri
 # ==========================================================================
 
 cells.append(md(
-"""## Reconstruct Phase 1 baseline (anchor linear, variant C)
+"""## Anchor-preserving baseline (cluster-split retrained)
 
-We recompute Phase 1's anchor-preserving linear $A_\\text{REG}'$ inline
-rather than loading a saved file — this keeps the notebook
-self-contained and independent of the Phase 1 notebook's seed choices.
-Cluster split is identical (same DBSCAN eps=0.15, same seed=0).
+The **final** anchor-preserving (nd, Vd, dPgF) → (ν₃, ν₄) regressor is
+shipped at `data/regression_buchdahl_anchor_nu34_20dim_opt.npy` (trained
+on the full 544-glass catalog; used by NB02 and NB03). Phase 2 cannot
+use that one directly: training the residual NN and evaluating its
+held-out lift both require the baseline to have **not** seen the test
+glasses, or apparent residual improvements would be inflated by leakage.
+
+This cell therefore retrains the cross-glass linear regressor on a
+cluster-split training set (DBSCAN eps = 0.15, seed = 0), leaving the
+test clusters strictly unseen. The math is identical to the shipped
+regressor — only the training subset differs. Per-glass anchor LSQ
+targets come from the shared `fit_anchor_preserving_coefficients`.
 """))
 
 cells.append(code(
-"""# Anchor-preserving Level 1 fit (same as Phase 1 Part 1A)
-M_MAT = np.array([
-    [OMEGA_F - OMEGA_C,   OMEGA_F**2 - OMEGA_C**2],
-    [OMEGA_g - OMEGA_F,   OMEGA_g**2 - OMEGA_F**2],
-])
-D_MAT = np.array([
-    [OMEGA_F**3 - OMEGA_C**3,  OMEGA_F**4 - OMEGA_C**4],
-    [OMEGA_g**3 - OMEGA_F**3,  OMEGA_g**4 - OMEGA_F**4],
-])
-M_INV = np.linalg.inv(M_MAT)
-B_COUP = M_INV @ D_MAT
-
-
-def anchor_preserving_fit(nd, vd, dPgF, n_truth, omega_grid):
-    dn_FC = (nd - 1.0) / vd
-    PgF = 0.6438 - 0.001682*vd + dPgF
-    dn_gF = PgF * dn_FC
-    a = M_INV @ np.array([dn_FC, dn_gF])
-    phi3 = omega_grid**3 - omega_grid*B_COUP[0,0] - omega_grid**2 * B_COUP[1,0]
-    phi4 = omega_grid**4 - omega_grid*B_COUP[0,1] - omega_grid**2 * B_COUP[1,1]
-    basis = np.column_stack([phi3, phi4])
-    target = n_truth - nd - omega_grid*a[0] - omega_grid**2 * a[1]
-    nu34, *_ = np.linalg.lstsq(basis, target, rcond=None)
-    nu12 = a - B_COUP @ nu34
-    return nu12[0], nu12[1], nu34[0], nu34[1]
-
-
-# Per-glass anchor targets (using 17-pt H1 grid, same as Phase 1 training)
-OMEGA_H1 = buchdahl_omega(LAM_H1)
+"""# Per-glass anchor-preserving LSQ targets on the 17-pt H1 grid
 new_coefs = np.zeros((N_GLASS, 4))
 for i, g in enumerate(glasses):
-    new_coefs[i] = anchor_preserving_fit(g["nd"], g["vd"], g["dPgF"],
-                                         g["n_H1"], OMEGA_H1)
+    new_coefs[i] = fit_anchor_preserving_coefficients(
+        g["nd"], g["vd"], g["dPgF"], g["n_H1"]
+    )
 
-# 20-dim polynomial features
-def feature_vec(nd, vd, dPgF):
-    sq = [1.0, nd, vd, dPgF, nd*nd, vd*vd, dPgF*dPgF, nd*vd, nd*dPgF, vd*dPgF]
-    cu = [nd**3, vd**3, dPgF**3, nd*nd*vd, nd*nd*dPgF, vd*vd*nd, vd*vd*dPgF,
-          dPgF*dPgF*nd, dPgF*dPgF*vd, nd*vd*dPgF]
-    return np.array(sq + cu, dtype=np.float64)
-
+# 20-dim polynomial features (shared module; aliased to feature_vec above)
 Phi = np.array([feature_vec(g["nd"], g["vd"], g["dPgF"]) for g in glasses])
 
-# Cluster split identical to Phase 1
+# Cluster split for unbiased Phase-2 held-out evaluation
 X_params = np.array([[g["nd"], g["vd"], g["dPgF"]] for g in glasses])
 X_scaled = StandardScaler().fit_transform(X_params)
 db = DBSCAN(eps=0.15, min_samples=2).fit(X_scaled)
@@ -342,21 +258,18 @@ train_clusters = set(perm[:n_train])
 train_mask = np.array([cid in train_clusters for cid in cluster_ids])
 test_mask  = ~train_mask
 
-# Train A_REG_anchor (variant C) — same as Phase 1
+# Retrain the anchor-preserving (nd, Vd, dPgF) -> (nu3, nu4) map on train clusters only.
 Y_anchor = new_coefs[:, 2:]
 A_REG_anchor, *_ = np.linalg.lstsq(Phi[train_mask], Y_anchor[train_mask], rcond=None)
 
 
 def predict_C_coefs(i_glass):
-    \"\"\"Return (nu1, nu2, nu3, nu4) for glass i under variant C.\"\"\"
-    nu34 = Phi[i_glass] @ A_REG_anchor
+    \"\"\"Return (nu1, nu2, nu3, nu4) for glass i under the anchor-
+    preserving linear baseline.\"\"\"
+    nu3, nu4 = Phi[i_glass] @ A_REG_anchor
     g = glasses[i_glass]
-    dn_FC = (g["nd"] - 1.0) / g["vd"]
-    PgF = 0.6438 - 0.001682*g["vd"] + g["dPgF"]
-    dn_gF = PgF * dn_FC
-    a = M_INV @ np.array([dn_FC, dn_gF])
-    nu12 = a - B_COUP @ nu34
-    return np.array([nu12[0], nu12[1], nu34[0], nu34[1]])
+    nu1, nu2 = solve_nu12_from_nu34(g["nd"], g["vd"], g["dPgF"], nu3, nu4)
+    return np.array([nu1, nu2, nu3, nu4])
 
 
 def n_base(i_glass, lam_grid):

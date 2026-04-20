@@ -112,65 +112,42 @@ def verdict(condition, label_pass="PASS", label_fail="FAIL"):
 """))
 
 cells.append(code(
-"""# --- Buchdahl constants (identical to model_glass_buchdahl.ipynb) ---
-LAMBDA_D = 0.5875618
-LAMBDA_g = 0.4358343
-LAMBDA_F = 0.4861327
-LAMBDA_C = 0.6562725
-ALPHA    = 1.818  # optimized alpha from main notebook (539/543 glasses < 5e-3)
+"""# --- Buchdahl forward model (anchor-preserving) via dispersionlab ---
+#
+# Constants and primitives live in the shared dispersionlab package so
+# every notebook agrees byte-for-byte on ALPHA, the spectral-line omegas,
+# the 20-D feature vector, and the nu1/nu2 anchor back-solve.
+
+from dispersionlab import (
+    LAMBDA_D, LAMBDA_F, LAMBDA_C, LAMBDA_g,
+    ALPHA,
+    buchdahl_omega,
+    feature_vec_20,
+    solve_nu12_from_nu34,
+)
+
+A_REG = np.load("../data/regression_buchdahl_anchor_nu34_20dim_opt.npy")
+print(f"Loaded anchor-preserving A_reg: shape = {A_REG.shape}  (alpha = {ALPHA})")
 
 
-def buchdahl_omega(lam, lam_d=LAMBDA_D, alpha=ALPHA):
-    dl = lam - lam_d
-    return dl / (1.0 + alpha * dl)
+def predict_index_buchdahl(nd, vd, dPgF, lam, A_reg=A_REG):
+    \"\"\"Anchor-preserving n(lambda) from three catalog parameters.
 
+    (nu3, nu4) come from the 20-D linear regressor; (nu1, nu2) are
+    back-solved so that at floating-point precision:
 
-OMEGA_g = buchdahl_omega(LAMBDA_g)
-OMEGA_F = buchdahl_omega(LAMBDA_F)
-OMEGA_C = buchdahl_omega(LAMBDA_C)
-
-
-def analytical_nu12(nd, vd, dPgF):
-    dn_FC = (nd - 1.0) / vd
-    PgF   = 0.6438 - 0.001682 * vd + dPgF
-    dn_gF = PgF * dn_FC
-    M = np.array([
-        [OMEGA_F - OMEGA_C,   OMEGA_F**2 - OMEGA_C**2],
-        [OMEGA_g - OMEGA_F,   OMEGA_g**2 - OMEGA_F**2],
-    ])
-    return np.linalg.solve(M, np.array([dn_FC, dn_gF]))
-
-
-def feature_vec(nd, vd, dPgF):
-    square = np.array([
-        1.0, nd, vd, dPgF,
-        nd**2, vd**2, dPgF**2,
-        nd*vd, nd*dPgF, vd*dPgF,
-    ], dtype=np.float64)
-    cube = np.array([
-        nd**3, vd**3, dPgF**3,
-        nd**2*vd, nd**2*dPgF,
-        vd**2*nd, vd**2*dPgF,
-        dPgF**2*nd, dPgF**2*vd,
-        nd*vd*dPgF,
-    ], dtype=np.float64)
-    return np.concatenate([square, cube])
-
-
-A_REG = np.load("../data/regression_buchdahl_nu34_20dim_opt.npy")  # matches ALPHA=1.818
-print(f"Loaded A_reg: shape = {A_REG.shape}  (alpha = {ALPHA})")
-
-
-def predict_index_buchdahl(nd, vd, dPgF, lam, A_reg=A_REG, alpha=ALPHA):
-    \"\"\"Full n(lambda) prediction from three physical parameters.\"\"\"
-    nu12 = analytical_nu12(nd, vd, dPgF)
-    nu34 = feature_vec(nd, vd, dPgF) @ A_reg
-    omega = buchdahl_omega(np.asarray(lam, dtype=np.float64), alpha=alpha)
-    nu_all = np.array([nu12[0], nu12[1], nu34[0], nu34[1]])
-    result = np.full_like(omega, float(nd), dtype=np.float64)
-    for k, nu_k in enumerate(nu_all, start=1):
-        result = result + nu_k * omega**k
-    return result
+        n(lambda_d)               = nd
+        n(lambda_F) - n(lambda_C) = (nd - 1) / Vd
+        n(lambda_g) - n(lambda_F) = P_{g,F} * (nd - 1) / Vd
+    \"\"\"
+    nu3, nu4 = feature_vec_20(nd, vd, dPgF) @ A_reg
+    nu1, nu2 = solve_nu12_from_nu34(nd, vd, dPgF, nu3, nu4)
+    omega = buchdahl_omega(np.asarray(lam, dtype=np.float64))
+    return (nd
+            + nu1 * omega
+            + nu2 * omega**2
+            + nu3 * omega**3
+            + nu4 * omega**4)
 """))
 
 cells.append(md(

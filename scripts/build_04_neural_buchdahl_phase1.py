@@ -1,19 +1,27 @@
-"""Build neural_buchdahl.ipynb — Part 1.
+"""Build 04_neural_buchdahl_phase1.ipynb.
 
-Thesis chapter #4: extend Buchdahl to NN inside the existing coordinate
-system, starting with anchor-preserving baseline repair.
+Coefficient-predictor ablation under the anchor-preserving Buchdahl
+model (K = 4, α = 1.818). Canonical derivation of the two construction
+orders lives in §1.4 of the report; this notebook quantifies the
+downstream consequences.
 
-Central question:
+Two questions:
 
-    Once the spectral-line anchors are enforced exactly on the per-glass
-    coefficient targets, how much expressive power is still missing
-    from the 3-parameter (nd, Vd, dPgF) -> (nu3, nu4) mapping?
+  1. How much do legacy (free 4-coef LSQ) and anchor-preserving
+     (ν₁,ν₂ coupling-solved from ν₃,ν₄) constructions differ on
+     Claim F (V_d/ΔP_{g,F} preservation) and Claim G (Conrady apo-
+     doublet agreement with Sellmeier truth)?
 
-Part 1 deliverables (self-contained):
-  1A. Per-glass anchor-preserving coefficient fit (Level 1 repair).
-  1B. Three Level 2 predictors + Oracle baseline on the repaired targets.
+  2. Under the anchor-preserving construction at 544 glasses / 3-d
+     input, does a neural Level-2 predictor add anything over the
+     20-D polynomial linear map?
+
+Deliverables:
+  1A. Per-glass anchor-preserving Level-1 targets (no ML).
+  1B. Four Level-2 predictors: legacy linear (for contrast), anchor
+      linear, anchor MLP, Oracle (upper bound).
   1C. Claim F: end-to-end anchor preservation (F1, F2_abs, F2_rel, F3).
-  1D. Claim G: downstream ranking stability on fixed apo-doublet bench.
+  1D. Claim G: Conrady secondary-spectrum ranking vs Sellmeier truth.
 """
 
 import json
@@ -49,72 +57,64 @@ cells = []
 # =========================================================================
 
 cells.append(md(
-"""# Neural Extension of the Buchdahl Dispersion Model — Part 1
+"""# Coefficient-Predictor Ablation under the Anchor-Preserving Buchdahl Model
 
-This is the 4th notebook of the thesis arc on **dispersion-model
-representations** for "model glass" used in optical design. The
-previous three:
+Fourth notebook of the thesis arc. The canonical **anchor-preserving
+Buchdahl construction** (`[ν₁, ν₂]ᵀ = a − B·[ν₃, ν₄]ᵀ`, with basis
+`Φ_3, Φ_4` defined against anchor differences) is derived in §1.4 of the
+report and shipped as `dispersionlab.solve_nu12_from_nu34` /
+`fit_anchor_preserving_coefficients`. NB02 and NB03 consume it as their
+production forward model.
 
-- `model_glass_buchdahl.ipynb` — trains the 3-parameter Buchdahl model.
-- `glass_substitution_workflow.ipynb` — validates it via 5 claims.
-- `differentiable_design.ipynb` — torch backend + analytical tolerancing.
+**What this notebook quantifies**:
 
-**What Notebook 4 does**: treats the Buchdahl coefficient regression as a
-question of *model capacity inside a physically-constrained coordinate
-system*. It fixes a latent bug in the existing targets and then asks
-whether neural expressivity adds anything on top of the corrected
-targets.
+1. **Legacy vs anchor-preserving construction** — the two
+   coefficient-assembly orderings described in §1.4. Legacy solves
+   `(ν₁, ν₂)` from anchor differences while **ignoring** the high-order
+   contribution at $\\lambda_F, \\lambda_C, \\lambda_g$; anchor-preserving
+   moves that contribution to the right-hand side and couples the
+   solve. The difference is a slip of order $\\|D·[\\nu_3, \\nu_4]^\\top\\|$
+   in `n(F) − n(C)`, i.e. ~1% relative in $V_d$. How big is the resulting
+   gap on **downstream** physical quantities (Claim F / Claim G)?
 
-**The bug** (quantified on N-BK7: slip = 1.15e-4 in $n(F)-n(C)$, i.e.
-~1.4% relative in $V_d$). The current `analytical_nu12` solves
+2. **Predictor capacity under the anchor-preserving construction** —
+   does a neural map add anything over the 20-D polynomial linear map
+   at 544 glasses / 3-d input / 2-d output?
 
-$$M \\begin{bmatrix} \\nu_1 \\\\ \\nu_2 \\end{bmatrix}
- = \\begin{bmatrix} \\Delta n_{FC} \\\\ \\Delta n_{gF} \\end{bmatrix}$$
+**Two-level decomposition** of the forward model:
 
-**ignoring the $\\nu_3, \\nu_4$ contribution** at $\\lambda_F, \\lambda_C,
-\\lambda_g$. So the model's output curve has an $n(F) - n(C)$ that is
-not exactly $(n_d - 1)/V_d$. The per-glass $(\\nu_3, \\nu_4)$ *target*
-fed into `A_REG` regression is itself polluted by this slip, which
-contaminates any downstream comparison of predictor capacity.
-
-**Central question**:
-
-> Once the spectral-line anchors are enforced exactly on the per-glass
-> coefficient targets, how much expressive power is still missing from
-> the 3-parameter $(n_d, V_d, \\Delta P_{g,F}) \\to (\\nu_3, \\nu_4)$
-> mapping?
-
-**Two-level decomposition**
-
-| Level | What it computes | Current repo |
+| Level | What it computes | Artifact |
 |---|---|---|
-| **Level 1** (per-glass) | Sellmeier truth → best $(\\nu_3, \\nu_4)$ target | `nu34_residual` in main notebook |
-| **Level 2** (cross-glass) | $(n_d, V_d, \\Delta P_{g,F}) \\to (\\nu_3, \\nu_4)$ predictor | `regression_buchdahl_nu34_20dim_opt.npy` |
+| **Level 1** (per-glass) | Sellmeier truth → constrained LSQ for $(\\nu_3, \\nu_4)$ | `fit_anchor_preserving_coefficients` |
+| **Level 2** (cross-glass) | $(n_d, V_d, \\Delta P_{g,F}) \\to (\\nu_3, \\nu_4)$ predictor | `data/regression_buchdahl_anchor_nu34_20dim_opt.npy` (production) |
 
-**Part 1 plan**
+**Plan**
 
-1. **1A** — anchor-preserving Level 1 fit (physics repair, no ML).
-2. **1B** — Level 2 predictors on repaired targets:
-   - **A: Old linear** (existing `A_REG`, trained on old targets)
-   - **C: Anchor linear** (same 20-dim features, retrained on anchor targets)
-   - **D: Anchor MLP** (3→16→16→2 tanh, weight decay, 5-seed ensemble)
-   - **Oracle** (per-glass best $(\\nu_3, \\nu_4)$ + anchor solve; upper bound)
-3. **1C** — Claim F: end-to-end anchor preservation (F1, F2_abs, F2_rel, F3).
-4. **1D** — Claim G: downstream ranking stability vs Sellmeier truth on
-   the fixed apo-doublet test bench from the workflow notebook.
+1. **1A** — anchor-preserving Level-1 LSQ targets on 544 glasses.
+2. **1B** — four Level-2 predictors:
+   - **A: legacy linear** (legacy construction ⊕ pretrained 20-dim
+     linear on legacy targets) — construction contrast row.
+   - **C: anchor linear** (anchor-preserving construction ⊕ retrained
+     20-dim linear on anchor-preserving targets) — the **production
+     predictor**.
+   - **D: anchor MLP** (anchor-preserving construction ⊕ 3→16→16→2 tanh
+     MLP, weight decay, 5-seed ensemble) — capacity probe.
+   - **Oracle** (per-glass best $(\\nu_3, \\nu_4)$ + anchor coupling
+     solve) — Level-2 upper bound.
+3. **1C** — Claim F: anchor preservation (F1, F2_abs, F2_rel, F3).
+4. **1D** — Claim G: Conrady secondary-spectrum ranking vs full Sellmeier.
 5. **Scorecard** joint F+G; conclusion.
 
-Expected take-away (refined after first execution — see Conclusion for
-the actual numbers):
+**Expected take-aways** (confirmed at end of run):
 
-> Anchor-preserving repair does **not** reduce raw $n(\\lambda)$
-> reconstruction error on the cluster-holdout split; C/D are slightly
-> *worse* than A on max/P95/RMS. It does, however, eliminate the physical
-> anchor slip *by construction* and dramatically improves downstream
-> secondary-spectrum agreement with Sellmeier truth. The MLP adds little
-> over the retrained anchor-linear map — on 544 glasses with a 3-d
-> input, the 20-d polynomial predictor is already sufficient inside the
-> repaired parameterization.
+> The legacy construction slips $V_d$ by up to O(1 unit) and biases the
+> downstream secondary spectrum by ~12 μm median; the anchor-preserving
+> construction kills F/G slip by construction (machine precision) and
+> drops Claim G median |ΔS| to ~1.5 μm, at which point the Oracle floor
+> is hit. The MLP variant matches the linear variant across every
+> metric — a clean negative result: at this catalog size and input
+> dimension, the 20-D polynomial map already saturates the cross-glass
+> $(n_d, V_d, \\Delta P_{g,F}) \\to (\\nu_3, \\nu_4)$ target.
 """))
 
 # =========================================================================
@@ -259,55 +259,36 @@ print(f"A_REG_old loaded: shape {A_REG_old.shape}  (alpha = {ALPHA})")
 # =========================================================================
 
 cells.append(md(
-"""## 1A — Per-glass anchor-preserving coefficient fit
+"""## 1A — Per-glass anchor-preserving Level-1 targets
 
-### Derivation
+Reproduction of §1.4 derivation — used here to generate the constrained
+LSQ targets `(ν₃, ν₄)` per glass, with `(ν₁, ν₂)` back-solved by the
+coupling $[\\nu_1, \\nu_2]^\\top = a - B\\,[\\nu_3, \\nu_4]^\\top$ so that
+`V_d` and `ΔP_{g,F}` are preserved at machine precision for every
+glass.
 
-Buchdahl 4-term:
-
-$$n(\\lambda) = n_d + \\nu_1 \\omega + \\nu_2 \\omega^2 + \\nu_3 \\omega^3 + \\nu_4 \\omega^4$$
-
-Anchor constraints. $\\omega(\\lambda_d) = 0$ makes $n(\\lambda_d) = n_d$
-automatic. The other two are:
-
-$$n(\\lambda_F) - n(\\lambda_C) = \\frac{n_d - 1}{V_d}, \\qquad
-  n(\\lambda_g) - n(\\lambda_F) = P_{g,F}\\,\\frac{n_d - 1}{V_d}$$
-
-Substituting the Buchdahl expansion and keeping all four $\\nu_k$ gives a
-**2×2 linear system for $\\nu_1, \\nu_2$ that does include the $\\nu_3,
-\\nu_4$ contributions**:
-
-$$M \\begin{bmatrix} \\nu_1 \\\\ \\nu_2 \\end{bmatrix}
- = \\begin{bmatrix} \\Delta n_{FC} \\\\ \\Delta n_{gF} \\end{bmatrix}
- - D \\begin{bmatrix} \\nu_3 \\\\ \\nu_4 \\end{bmatrix}$$
-
-with
+Shorthand:
 
 $$M = \\begin{bmatrix} \\omega_F - \\omega_C & \\omega_F^2 - \\omega_C^2 \\\\
                        \\omega_g - \\omega_F & \\omega_g^2 - \\omega_F^2 \\end{bmatrix}, \\quad
   D = \\begin{bmatrix} \\omega_F^3 - \\omega_C^3 & \\omega_F^4 - \\omega_C^4 \\\\
                        \\omega_g^3 - \\omega_F^3 & \\omega_g^4 - \\omega_F^4 \\end{bmatrix}$$
 
-Define $a = M^{-1}[\\Delta n_{FC}, \\Delta n_{gF}]^\\top$ and $B = M^{-1} D$.
-Then $[\\nu_1, \\nu_2]^\\top = a - B\\,[\\nu_3, \\nu_4]^\\top$.
+$a = M^{-1}[\\Delta n_{FC}, \\Delta n_{gF}]^\\top$ and $B = M^{-1} D$.
 
-The current repo uses $[\\nu_1, \\nu_2] = a$ (drops the $B$ coupling),
-which is why the output's $V_d, \\Delta P_{g,F}$ don't exactly match the
-input — the $\\nu_3, \\nu_4$ chosen by regression contribute at F/C/g.
+**Legacy construction** (row A below, kept only for downstream contrast)
+uses $[\\nu_1, \\nu_2] = a$ — drops the $B$ coupling; the output's
+`V_d, ΔP_{g,F}` then deviate from the input by the contribution of
+`ν₃, ν₄` at `λ_F, λ_C, λ_g`.
 
-Plugging this back into the full 4-term expansion, we get a linear
-problem **still in $\\nu_3, \\nu_4$**:
-
-$$n(\\lambda) - [n_d + \\omega a_1 + \\omega^2 a_2]
-= \\Phi_3(\\omega)\\,\\nu_3 + \\Phi_4(\\omega)\\,\\nu_4$$
-
-with effective basis
+**Anchor-preserving construction** (rows C, D, Oracle below — and the
+production forward model) solves LSQ on the effective basis
 
 $$\\Phi_3(\\omega) = \\omega^3 - \\omega B_{11} - \\omega^2 B_{21}, \\qquad
   \\Phi_4(\\omega) = \\omega^4 - \\omega B_{12} - \\omega^2 B_{22}$$
 
-**One `lstsq` per glass; no iteration.** Anchor constraints hold by
-construction.
+which is zero at F/C/g differences by construction; one `lstsq` per
+glass, no iteration.
 """))
 
 cells.append(code(
@@ -438,16 +419,21 @@ print("than per-glass optimal targets.")
 # =========================================================================
 
 cells.append(md(
-"""## 1B — Level 2 predictors on the repaired targets
+"""## 1B — Level-2 predictors
 
 Four rows compared on the same test set:
 
-| Variant | Target | Regressor |
-|---|---|---|
-| **A: Old linear** | old non-anchor $(\\nu_3, \\nu_4)$ | pretrained `A_REG` (20-d linear) |
-| **C: Anchor linear** | anchor-preserving $(\\nu_3, \\nu_4)$ | new `A_REG'` (20-d linear, retrained) |
-| **D: Anchor MLP** | anchor-preserving $(\\nu_3, \\nu_4)$ | MLP 3→16→16→2, tanh, WD=1e-3, 5-seed ensemble |
-| **Oracle** | anchor-preserving $(\\nu_3, \\nu_4)$ | per-glass best (the Level-1 target itself) |
+| Variant | Construction | Target | Regressor |
+|---|---|---|---|
+| **A: legacy linear** | legacy (no ν₃,ν₄ coupling) | legacy $(\\nu_3, \\nu_4)$ | pretrained `A_REG` (20-d linear) |
+| **C: anchor linear** | anchor-preserving | anchor-preserving $(\\nu_3, \\nu_4)$ | new `A_REG'` (20-d linear, retrained) |
+| **D: anchor MLP** | anchor-preserving | anchor-preserving $(\\nu_3, \\nu_4)$ | MLP 3→16→16→2, tanh, WD=1e-3, 5-seed ensemble |
+| **Oracle** | anchor-preserving | anchor-preserving $(\\nu_3, \\nu_4)$ | per-glass best (the Level-1 target itself) |
+
+Row A is retained as the **construction contrast**: it shows what the
+downstream metrics would look like if the coupling term $D \\cdot
+[\\nu_3, \\nu_4]^\\top$ were dropped. It is **not** the production path —
+NB02 and NB03 consume row C's retrained `A_REG'`.
 
 Oracle is the **upper bound for anchor-preserving Level-2 predictors
 within the 4-term Buchdahl parameterization** (variants C and D). It is
@@ -1052,95 +1038,85 @@ print(scorecard)
 """))
 
 cells.append(md(
-"""## Conclusion — what Part 1 actually tells us
+"""## Conclusion
 
-### 1. Raw $n(\\lambda)$ reconstruction (test_max / P95 / RMS)
+### 1. Raw $n(\\lambda)$ reconstruction (cluster-holdout)
 
-**Anchor repair does NOT improve this metric on the cluster-holdout
-split.** Variants C and D are slightly *worse* than variant A on max
-/ P95 / RMS. The reason: A's **anchor-unaware coefficient construction**
-lets the combined 4-term expansion silently modify $n(F) - n(C)$ and
-$n(g) - n(F)$ away from the anchor-defined values, so the per-glass fit
-has more freedom to minimize the 17-point residual. The anchor-preserving
-construction is strictly more constrained — $\\nu_1, \\nu_2$ are pinned
-by exact anchor equality given $\\nu_3, \\nu_4$.
-
-Raw $n(\\lambda)$ RMS is therefore **necessary but not sufficient**: it
+Variants C and D are slightly *worse* than variant A on max / P95 /
+RMS. This is a structural consequence, not a failure: A's legacy
+construction leaves all four $\\nu_k$ free for the 17-point LSQ, so it
+can minimize the residual by letting $n(F) - n(C)$ and $n(g) - n(F)$
+drift away from the anchor-defined values; the anchor-preserving
+construction pins two of those degrees of freedom by equality. Raw
+$n(\\lambda)$ RMS is therefore **necessary but not sufficient** — it
 misses anchor violations that propagate strongly into downstream design
-quantities, as the next two subsections show.
+quantities, as the next two sections show.
 
 ### 2. Claim F — physical consistency (F1, F2_abs, F2_rel, F3)
 
 Variant A's max $|V_d^\\text{out} - V_d^\\text{in}|$ reaches
-$\\mathcal{O}(1)$ units (relative slip ~2%). C, D, Oracle deliver all
-three F metrics at **floating-point precision** by architectural
-construction, not by training.
+$\\mathcal{O}(1)$ units (relative slip ~2 %). C, D, Oracle deliver all
+three F metrics at floating-point precision by construction, not by
+training.
 
-### 3. Claim G — downstream design agreement with Sellmeier truth
+### 3. Claim G — Conrady secondary spectrum vs Sellmeier truth
 
-The most consequential result. Median $|S_\\text{model} -
-S_\\text{truth}|$ drops from ~12 μm (variant A) to ~1.5 μm (C, D,
-Oracle). Spearman rank correlation with truth improves from 0.955
-to 0.998. **The anchor slip that didn't show up in raw $n(\\lambda)$
-RMS propagates strongly through the achromat-design equations and
-produces a biased secondary spectrum.**
+Median $|S_\\text{model} - S_\\text{truth}|$ drops from ~12 μm (variant
+A) to ~1.5 μm (C, D, Oracle). Spearman rank correlation with truth
+improves from 0.955 to 0.998. **The construction gap on $V_d$/
+$\\Delta P_{g,F}$ does not show up in raw $n(\\lambda)$ RMS but
+propagates strongly through the achromat design equations.** This is
+the quantitative case for the anchor-preserving construction as the
+production forward model.
 
-### 4. Anchor linear (C) vs anchor MLP (D)
+### 4. Anchor linear (C) vs anchor MLP (D) — clean negative result
 
-Essentially identical on every metric. At ~544 glasses with a 3-d
-input, the 20-d polynomial already saturates the Level-2 map. **MLP
-provides no measurable lift** — a clean negative result saying the
-bottleneck is not predictor capacity.
+C and D are essentially identical on every metric. At ~544 glasses with
+a 3-d input and 2-d output, the 20-D polynomial already saturates the
+cross-glass $(n_d, V_d, \\Delta P_{g,F}) \\to (\\nu_3, \\nu_4)$ map.
+**MLP adds no measurable lift** — the bottleneck is not predictor
+capacity.
 
-### 5. Anchor linear (C) vs Oracle
+### 5. Anchor linear (C) vs Oracle — 4-term family floor
 
-Also essentially identical on downstream metrics. Oracle is the
-best-any-predictor-can-do bound **for the anchor-preserving 4-term
-Buchdahl family under the Level-1 spectral-fit target** — it is not a
-downstream-$S$-optimal oracle, but it is a tight upper bound on what
-any Level-2 predictor can deliver under this parameterization. Since
-C already matches it, the remaining ~1.5 μm is *consistent with* the
-4-term anchor-preserving Buchdahl floor at this target. Attacking that
-floor is the job of Phase 2 (bounded neural residual outside the
-polynomial basis); a higher-order Buchdahl extension would attack the
-same floor from within the basis but is subject to the overfitting
-ceiling established by Notebook 01 Test A — see the Future-work
-section below.
+C matches Oracle on downstream metrics. Oracle is the tight upper bound
+for anchor-preserving Level-2 predictors within the 4-term Buchdahl
+parameterization. Since C already hits it, the remaining ~1.5 μm
+median |ΔS| is the **4-term anchor-preserving family's Conrady floor**,
+not predictor error. Attacking that floor is the job of Phase 2
+(bounded neural residual outside the polynomial basis).
 
-### Honest summary after Part 1
+### Honest summary
 
-> The anchor-preserving repair does not reduce raw $n(\\lambda)$
-> reconstruction error on the cluster-holdout split — in fact C and D
-> are slightly *worse* than the old A on max / P95 / RMS. However, it
-> eliminates the physical anchor slip by construction and dramatically
-> improves downstream secondary-spectrum agreement with Sellmeier
-> truth (median $|\\Delta S|$ drops from ~12 μm to ~1.5 μm; Spearman
-> from 0.955 to 0.998). The MLP adds little over the retrained
-> anchor-linear map, suggesting the 20-d polynomial predictor already
-> saturates the cross-glass map at this dataset size. The residual
-> ~1.5 μm is consistent with the Oracle upper bound (the 4-term
-> anchor-preserving Buchdahl floor at this Level-1 target) rather than
-> with predictor error — attacking this floor motivates Phase 2's
-> bounded residual architecture, which stays at order 4.
+> The anchor-preserving construction does not reduce raw
+> $n(\\lambda)$ reconstruction error on the cluster-holdout split — in
+> fact C and D are slightly *worse* than the legacy A on max / P95 /
+> RMS. But it kills the physical anchor slip by construction and
+> dramatically improves downstream secondary-spectrum agreement with
+> Sellmeier truth (median $|\\Delta S|$ 12 μm → 1.5 μm; Spearman 0.955
+> → 0.998). MLP adds nothing over the retrained anchor-linear map;
+> the 20-D polynomial predictor saturates the cross-glass map at this
+> dataset size. The residual ~1.5 μm is the 4-term anchor-preserving
+> Buchdahl floor (C matches Oracle), not predictor error — attacking
+> it motivates Phase 2's bounded residual architecture.
 
 ### Future work
 
 - **Phase 2** — bounded envelope residual correction
   $n = n_\\text{Buchdahl} + \\varepsilon_\\text{scale}\\,q(\\lambda)\\,\\tanh(\\text{NN})$
-  with $q$ vanishing at $d/F/C/g$. Stays at polynomial order 4, so it
-  inherits Notebook 01 Test A's validation and does not re-open the
-  higher-order overfitting regime.
-- **Higher-order Buchdahl** ($K\\in\\{5,6\\}$) is **not** a natural
-  default. Notebook 01 Test A shows order-5+ unconstrained fits
-  overfit badly on the current 17-wavelength grid (holdout ratio
-  rises to $\\sim 3.8\\times$ at $K=5$). Any higher-order Phase 3
-  scheme would first need a denser wavelength grid, regularisation,
-  or structural priors on $\\nu_{k\\ge 3}$ — it is a constrained
-  experiment, not a drop-in extension.
-- **Backport** the anchor-preserving fit to the other three notebooks
-  and recheck their measured secondary-spectrum numbers; Claim G here
-  suggests the bias on this test bench is $\\mathcal{O}(10\\,\\mu m)$,
-  but the magnitude should be re-verified per-notebook after backport.
+  with $q$ vanishing at $d/F/C/g$. Stays at K = 4, so it inherits this
+  notebook's predictor-saturation conclusion and does not re-open
+  higher-order selection questions.
+- **Accuracy frontier at K = 8, α = 1.26.** A full (K × α) sweep under
+  the anchor-preserving family (see report §1.6 and
+  `scripts/build_01_anchor_model.py`) shows that raw $n(\\lambda)$ hold
+  error keeps dropping well past K = 4 — reaching p95 ≈ 4.6·10⁻⁴ at
+  K = 8, α = 1.26 with clean Test B cross-glass CV. That frontier is
+  **not** the production path (its downstream Conrady gain is zero by
+  the anchor argument above), but it is the right starting point for a
+  future NIR / broadband extension.
+- **Melt-to-melt tolerances** — replace Schott Step 1.0 independent
+  Gaussians with real melt-sheet covariances.
 """))
 
 
