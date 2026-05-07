@@ -501,7 +501,7 @@ requires-dist = [
     { name = "matplotlib" },
     { name = "nbformat" },
     { name = "numpy" },
-    { name = "optiland" },
+    { name = "optiland", editable = "../optiland" },
     { name = "pandas" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
@@ -1751,7 +1751,7 @@ wheels = [
 [[package]]
 name = "optiland"
 version = "0.6.0"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../optiland" }
 dependencies = [
     { name = "matplotlib" },
     { name = "numba" },
@@ -1765,10 +1765,34 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "vtk" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/d9/a4eb5fa79276eaac2c2d90fbdb99a2fbfb71edb5b62e06b054eebbae1b36/optiland-0.6.0.tar.gz", hash = "sha256:3fdbc3f0517d26d4072966dc393ba2c523117caee745a73b13f4c26b529a0e89", size = 45283041, upload-time = "2026-04-03T16:21:14.579Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/50/e1/ba00253844a843f4ba0ca1f36fcf7231f1826e78bee69000c378964ee3d2/optiland-0.6.0-py3-none-any.whl", hash = "sha256:dddc7aa1eff3cc03c88ba8c2d9c4bd4a180ad9ab745d9df533d047e6fb1162eb", size = 14699179, upload-time = "2026-04-03T16:21:10.116Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "matplotlib" },
+    { name = "numba", specifier = ">=0.60.0" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "scipy" },
+    { name = "seaborn" },
+    { name = "tabulate" },
+    { name = "typing-extensions", specifier = ">=4.1.0" },
+    { name = "vtk" },
 ]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "codecov", specifier = ">=2.1.13" },
+    { name = "pytest", specifier = ">=8.3.5" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "torch" },
+]
+gui = [
+    { name = "pyside6" },
+    { name = "qtconsole" },
+]
+torch = [{ name = "torch" }]
 
 [[package]]
 name = "overrides"
