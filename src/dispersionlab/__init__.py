@@ -30,12 +30,14 @@ from .buchdahl import (
     solve_nu12_from_nu34,
 )
 from .catalog import load_glass_catalog, sellmeier_formula_2
+from .optiland_adapter import DispersionLabMaterial, ThermalDispersionLabMaterial
 
 __all__ = [
     "ALPHA",
     "B_COUP",
     "DPGF_MAX",
     "DPGF_MIN",
+    "DispersionLabMaterial",
     "LAMBDA_C",
     "LAMBDA_D",
     "LAMBDA_F",
@@ -44,6 +46,7 @@ __all__ = [
     "M_INV",
     "SCHOTT_NORMAL_A",
     "SCHOTT_NORMAL_B",
+    "ThermalDispersionLabMaterial",
     "VD_MAX",
     "VD_MIN",
     "WAVELENGTHS",
